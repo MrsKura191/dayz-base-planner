@@ -1,11 +1,14 @@
 import { PARTS } from './data';
 import type { Piece } from './store';
+import { sanitizeSites, type SiteRef } from './house';
 
 export interface Design {
   id: string;
   name: string;
   updated: number;
   pieces: Omit<Piece, 'id'>[];
+  /** buildings from the game files (model name and placement only) */
+  sites?: SiteRef[];
 }
 
 const KEY = 'abp.designs.v1';
@@ -79,19 +82,19 @@ const unb64u = (s: string) => {
   return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 };
 
-export async function encodeShare(name: string, pieces: Piece[]) {
+export async function encodeShare(name: string, pieces: Piece[], sites: SiteRef[] = []) {
   const ids = [...new Set(pieces.map((p) => p.t))];
   const r = (v: number) => Math.round(v * 100) / 100;
-  const payload = { v: 1, n: name, ids, p: pieces.map((p) => [ids.indexOf(p.t), r(p.x), r(p.y), r(p.z), Math.round(p.r * 1000) / 1000, p.l]) };
+  const payload = { v: 1, n: name, ids, p: pieces.map((p) => [ids.indexOf(p.t), r(p.x), r(p.y), r(p.z), Math.round(p.r * 1000) / 1000, p.l]), ...(sites.length ? { s: sites } : {}) };
   return b64u(await deflate(JSON.stringify(payload)));
 }
 
-export async function decodeShare(code: string): Promise<{ name: string; pieces: Omit<Piece, 'id'>[] } | null> {
+export async function decodeShare(code: string): Promise<{ name: string; pieces: Omit<Piece, 'id'>[]; sites: SiteRef[] } | null> {
   try {
     const data = JSON.parse(await inflate(unb64u(code)));
     if (data.v !== 1) return null;
     const pieces = (data.p as number[][]).map(([i, x, y, z, r, l]) => ({ t: data.ids[i], x, y, z, r, l }));
-    return { name: String(data.n ?? 'Geteilter Plan').slice(0, 60), pieces: sanitize(pieces) };
+    return { name: String(data.n ?? 'Geteilter Plan').slice(0, 60), pieces: sanitize(pieces), sites: sanitizeSites(data.s) };
   } catch {
     return null;
   }

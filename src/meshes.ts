@@ -94,7 +94,7 @@ function mesh(parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Mate
 const box = (p: THREE.Object3D, mat: THREE.Material, w: number, h: number, d: number, x: number, y: number, z: number, o?: BoxOpts) =>
   mesh(p, meterBox(w, h, d), mat, x, y, z, o);
 
-type DoorMode = 'hinge' | 'hingeR' | 'hatch' | 'roller' | 'tilt';
+type DoorMode = 'hinge' | 'hingeR' | 'hatch' | 'roller' | 'tilt' | 'axis';
 function pivot(parent: THREE.Object3D, mode: DoorMode, x: number, y: number, z: number, h = 0) {
   const p = new THREE.Group();
   p.position.set(x, y, z);
@@ -745,6 +745,12 @@ export function stepDoor(p: THREE.Object3D, dt: number): boolean {
     case 'hingeR': p.rotation.y = d.t * 1.7; break;
     case 'hatch': p.rotation.x = -d.t * 1.8; break;
     case 'tilt': p.rotation.x = -d.t * 1.48; break;
+    case 'axis': {
+      // building doors from game models: turn about their hinge axis
+      const [x, y, z] = d.axis as number[];
+      p.quaternion.setFromAxisAngle(new THREE.Vector3(x, y, z), d.t * 1.75);
+      break;
+    }
     case 'roller':
       p.position.y = d.baseY + d.t * d.h * 0.92;
       p.scale.y = 1 - d.t * 0.92;

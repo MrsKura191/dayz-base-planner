@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { DATA_AS_OF, DEFAULT_PART_LIMIT, MAX_LEVEL, WIKI_URL } from './constants';
 import { CATEGORIES, PART_ORDER, PARTS, type Category } from './data';
 import { Editor } from './editor';
@@ -12,6 +13,8 @@ import { anchorFrom, exportDze, MAPS, piecesFromDze, readDze, type Anchor, type 
 import { Store } from './store';
 import { renderThumbs } from './thumbs';
 import { WalkMode } from './walk';
+import { instance, loadModel, modelName, openPbo, placeholder, placeSite, pboModels, sanitizeSites, siteKey, type SiteRef } from './house';
+import type { PboIndex } from './odol';
 
 // ------------------------------------------------------------------ layout
 const app = document.getElementById('app')!;
@@ -37,6 +40,7 @@ app.innerHTML = `
     <span class="tb-sep"></span>
     <button class="tb" id="tbShot" data-tip="Screenshot speichern">${I.camera}</button>
     <button class="tb" id="tbShare" data-tip="Teilen-Link kopieren">${I.share}</button>
+    <button class="tb" id="tbHouse" data-tip="Gebäude aus DayZ-Dateien laden">${I.house}</button>
     <button class="tb" id="tbDayz" data-tip="In DayZ ansehen (Export für DayZ Editor)">${I.globe}</button>
     <button class="tb" id="tbHelp" data-tip="Hilfe & Tastatur (?)">${I.help}</button>
     <button class="tb on" id="tbPanel" data-tip="Seitenleiste ein/aus">${I.panel}</button>
@@ -71,6 +75,8 @@ app.innerHTML = `
   <input type="file" id="dzeAnchorFile" accept=".dze" hidden>
   <input type="file" id="dzeImportFile" accept=".dze" hidden>
   <div class="help-wrap" id="dayz" hidden></div>
+  <div class="help-wrap" id="houses" hidden></div>
+  <input type="file" id="pboFile" accept=".pbo" hidden>
 </div>
 <footer class="catalog" id="catalog">
   <div class="cat-head" id="catHead"></div>
@@ -85,6 +91,14 @@ let settings: Settings = loadSettings({
   upkeepPrices: {}, partLimit: DEFAULT_PART_LIMIT, rawNails: false, rawSheet: false, rawPlanks: false,
 });
 let design: Design = { id: newId(), name: 'Meine Basis', updated: Date.now(), pieces: [] };
+// buildings from the game files (declared early: boot() opens a design right away)
+let sites: SiteRef[] = [];
+const siteObjects = new Map<string, THREE.Object3D>();
+const siteState = new Map<string, 'ok' | 'missing' | 'error' | 'loading'>();
+let pboOpen: { name: string; index: PboIndex; models: { name: string; size: number }[] } | null = null;
+let houseQuery = '';
+let houseBusy = '';
+
 let tab: 'mat' | 'phase' | 'upkeep' | 'raid' = 'mat';
 let catTab: Category = 'wood';
 let search = '';
@@ -170,6 +184,7 @@ function markDirty() {
 
 function persistNow() {
   design.pieces = strip(store.all());
+  design.sites = sites.map((s) => ({ ...s }));
   design.name = ($('designName') as HTMLInputElement).value.trim() || 'Unbenannt';
   design.updated = Date.now();
   try {
@@ -187,6 +202,8 @@ function openDesign(d: Design) {
   design = d;
   ($('designName') as HTMLInputElement).value = d.name;
   store.load(d.pieces);
+  sites = (d.sites ?? []).map((s) => ({ ...s }));
+  void syncSites();
   editor.setActivePart(null);
   editor.frameAll();
   saveDesign(design);
@@ -236,10 +253,10 @@ $('designsMenu').onclick = (e) => {
       openDesign({ id: newId(), name: 'Neue Basis', updated: Date.now(), pieces: [] });
       break;
     case 'dup':
-      openDesign({ ...design, id: newId(), name: design.name + ' (Kopie)', pieces: strip(store.all()) });
+      openDesign({ ...design, id: newId(), name: design.name + ' (Kopie)', pieces: strip(store.all()), sites: sites.map((s) => ({ ...s })) });
       break;
     case 'export': {
-      const blob = new Blob([JSON.stringify({ app: 'aftermath-base-planner', v: 1, name: design.name, pieces: strip(store.all()) }, null, 1)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify({ app: 'aftermath-base-planner', v: 1, name: design.name, pieces: strip(store.all()), sites }, null, 1)], { type: 'application/json' });
       download(fileSafe(design.name) + '.json', URL.createObjectURL(blob));
       break;
     }
@@ -269,7 +286,7 @@ $('designsMenu').onclick = (e) => {
   try {
     const data = JSON.parse(await f.text());
     const pieces = sanitize(data.pieces);
-    openDesign({ id: newId(), name: String(data.name ?? f.name.replace(/\.json$/, '')).slice(0, 60), updated: Date.now(), pieces });
+    openDesign({ id: newId(), name: String(data.name ?? f.name.replace(/\.json$/, '')).slice(0, 60), updated: Date.now(), pieces, sites: sanitizeSites(data.sites) });
     toast(`${pieces.length} Teile importiert`);
   } catch {
     toast('Datei konnte nicht gelesen werden');
@@ -310,13 +327,14 @@ $('tbShot').onclick = () => {
 $('tbShare').onclick = () => share();
 $('tbHelp').onclick = () => toggleHelp();
 $('tbDayz').onclick = () => toggleDayz();
+$('tbHouse').onclick = () => toggleHouses();
 $('tbPanel').onclick = () => {
   $('panel').classList.toggle('collapsed');
   renderToolbar();
 };
 
 function startWalk() {
-  if (!store.pieces.size) {
+  if (!store.pieces.size && !sites.length) {
     toast('Bau erst etwas, dann kannst du hindurchlaufen');
     return;
   }
@@ -324,7 +342,7 @@ function startWalk() {
 }
 
 async function share() {
-  const code = await encodeShare(design.name, store.all());
+  const code = await encodeShare(design.name, store.all(), sites);
   const url = `${location.origin}${location.pathname}#plan=${code}`;
   try {
     await navigator.clipboard.writeText(url);
@@ -592,6 +610,7 @@ window.addEventListener('keydown', (e) => {
   switch (k) {
     case 'escape':
       if (!$('dayz').hidden) toggleDayz(false);
+      if (!$('houses').hidden) toggleHouses(false);
       else if (editor.moving != null) editor.endMove(false);
       else if (editor.raidPick) editor.setRaidPick(false);
       else if (!$('help').hidden) toggleHelp(false);
@@ -666,7 +685,7 @@ async function boot() {
     const shared = await decodeShare(m[1]);
     history.replaceState(null, '', location.pathname + location.search);
     if (shared) {
-      openDesign({ id: newId(), name: shared.name, updated: Date.now(), pieces: shared.pieces });
+      openDesign({ id: newId(), name: shared.name, updated: Date.now(), pieces: shared.pieces, sites: shared.sites });
       toast(`Geteilten Plan „${shared.name}“ geladen (${shared.pieces.length} Teile)`);
       return;
     }
@@ -812,5 +831,204 @@ $('dayz').addEventListener('change', (e) => {
   } catch (err) {
     toast('Datei konnte nicht gelesen werden');
     console.error(err);
+  }
+};
+
+// ------------------------------------------------ buildings from DayZ files
+
+async function syncSites() {
+  const want = new Set(sites.map((s) => s.id));
+  for (const [id, obj] of siteObjects) {
+    if (!want.has(id)) {
+      editor.sites.remove(obj);
+      siteObjects.delete(id);
+      siteState.delete(id);
+    }
+  }
+  await Promise.all(
+    sites.map(async (s) => {
+      let obj = siteObjects.get(s.id);
+      if (!obj) {
+        obj = placeholder(s);
+        siteObjects.set(s.id, obj);
+        editor.sites.add(obj);
+      }
+      placeSite(obj, s);
+      if (!obj.userData.placeholder) return;
+      siteState.set(s.id, 'loading');
+      try {
+        const tpl = await loadModel(s.pbo, s.path);
+        const cur = siteObjects.get(s.id);
+        if (!cur || !sites.includes(s) || !cur.userData.placeholder) return;
+        if (tpl) {
+          const inst = instance(tpl);
+          inst.userData.key = siteKey(s.pbo, s.path);
+          editor.sites.remove(cur);
+          editor.sites.add(inst);
+          siteObjects.set(s.id, inst);
+          s.size = tpl.userData.size;
+          s.center = tpl.userData.center;
+          placeSite(inst, s);
+          siteState.set(s.id, 'ok');
+        } else siteState.set(s.id, 'missing');
+      } catch (e) {
+        console.error(e);
+        siteState.set(s.id, 'error');
+      }
+    }),
+  );
+  if (!$('houses').hidden) renderHouses();
+}
+
+function toggleHouses(force?: boolean) {
+  const h = $('houses');
+  const show = force ?? h.hidden;
+  h.hidden = !show;
+  if (show) renderHouses();
+}
+
+function renderHouses(note = '') {
+  const n = (v: number) => (Math.round(v * 100) / 100).toString();
+  const missing = [...new Set(sites.filter((s) => siteState.get(s.id) === 'missing').map((s) => s.pbo))];
+  $('houses').innerHTML = `<div class="float help dayz" style="position:relative">
+    <button class="tb close" data-hs="close">${I.x}</button>
+    <h2>Gebäude aus DayZ</h2>
+    <p>Lade einzelne Gebäude direkt aus deinen DayZ-Spieldateien und bau darin oder daneben. Die Datei wird <b>nur in deinem Browser</b> gelesen – es wird nichts hochgeladen, und der Planer enthält selbst keine DayZ-Modelle.</p>
+    <h3>1 · PBO-Datei wählen</h3>
+    <div class="dz-row">
+      <button class="btn primary" data-hs="pick">${I.upload} PBO-Datei wählen</button>
+      ${pboOpen ? `<span class="info" style="margin:0">Geöffnet: <b>${esc(pboOpen.name)}</b> · ${pboOpen.models.length} Modelle</span>` : ''}
+    </div>
+    <p class="info">Die Gebäude der Karten liegen in <code>Steam\\steamapps\\common\\DayZ\\Addons\\</code>: <b>structures_residential.pbo</b> (Wohnhäuser), <b>structures_industrial.pbo</b>, <b>structures_military.pbo</b>, <b>structures_specific.pbo</b> … Mod-Gebäude liegen im Ordner <code>Addons</code> des jeweiligen Mods.</p>
+    ${missing.length ? `<div class="warn">Für ${missing.length > 1 || sites.filter((s) => siteState.get(s.id) === 'missing').length > 1 ? 'einige Gebäude' : 'ein Gebäude'} dieses Plans fehlt das Modell. Wähle ${missing.map((p) => `<b>${esc(p)}</b>`).join(', ')}.</div>` : ''}
+    ${houseBusy ? `<div class="info box">${esc(houseBusy)}</div>` : ''}
+    ${note ? `<div class="info box">${note}</div>` : ''}
+    ${pboOpen ? `<h3>2 · Gebäude hinzufügen</h3>
+    <div class="dz-row"><input class="design-name" data-hs="q" placeholder="Suchen, z. B. house, barn, garage …" value="${esc(houseQuery)}" style="flex:1;min-width:220px"></div>
+    <div class="hs-list" id="hsList"></div>` : ''}
+    ${sites.length ? `<h3>Im Plan</h3>
+    <div class="hs-sites">${sites
+      .map((s) => {
+        const st = siteState.get(s.id);
+        return `<div class="hs-site" data-id="${s.id}">
+        <b title="${esc(s.pbo + ' · ' + s.path)}">${esc(s.name)}</b>
+        ${st === 'missing' ? `<span class="warn" style="margin:0 0 0 8px">Modell fehlt – ${esc(s.pbo)} wählen</span>` : st === 'error' ? '<span class="warn" style="margin:0 0 0 8px">Modell nicht lesbar</span>' : st === 'loading' ? '<span class="info" style="margin:0 0 0 8px">lädt …</span>' : ''}
+        <div class="dz-row">
+          <label>X <input class="num" data-hs="x" type="number" step="0.5" value="${n(s.x)}"></label>
+          <label>Z <input class="num" data-hs="z" type="number" step="0.5" value="${n(s.z)}"></label>
+          <label>Höhe <input class="num" data-hs="y" type="number" step="0.05" value="${n(s.y)}"></label>
+          <label>Drehung ° <input class="num" data-hs="r" type="number" step="5" value="${n(s.r)}"></label>
+          <button class="btn" data-hs="rot">↻ 90°</button>
+          <button class="btn" data-hs="here" title="In die Bildmitte setzen">Hierher</button>
+          <button class="btn" data-hs="del" title="Aus dem Plan entfernen">${I.trash}</button>
+        </div></div>`;
+      })
+      .join('')}</div>
+    <p class="info">Türen öffnest du im Laufmodus mit <b>F</b>, Treppen sind begehbar. Material, Unterhalt und Raid rechnen nur mit deinen eigenen Bauteilen.</p>` : ''}
+  </div>`;
+  renderHouseList();
+}
+
+function renderHouseList() {
+  const el = document.getElementById('hsList');
+  if (!el || !pboOpen) return;
+  const q = houseQuery.trim().toLowerCase();
+  const hits = pboOpen.models.filter((m) => !q || m.name.toLowerCase().includes(q));
+  el.innerHTML =
+    hits
+      .slice(0, 250)
+      .map((m) => `<button class="hs-item" data-hs="add" data-path="${esc(m.name)}"><span>${esc(modelName(m.name))}</span><small>${esc(m.name)} · ${(m.size / 1024).toFixed(0)} KB</small></button>`)
+      .join('') + (hits.length > 250 ? `<p class="info">… ${hits.length - 250} weitere – Suche verfeinern.</p>` : hits.length ? '' : '<p class="info">Nichts gefunden.</p>');
+}
+
+$('houses').addEventListener('input', (e) => {
+  const el = e.target as HTMLInputElement;
+  if (el.dataset.hs === 'q') {
+    houseQuery = el.value;
+    renderHouseList();
+  }
+});
+
+$('houses').addEventListener('change', (e) => {
+  const el = e.target as HTMLInputElement;
+  const k = el.dataset.hs as 'x' | 'y' | 'z' | 'r';
+  if (!['x', 'y', 'z', 'r'].includes(k)) return;
+  const s = sites.find((x) => x.id === el.closest<HTMLElement>('.hs-site')?.dataset.id);
+  if (!s) return;
+  s[k] = Number(el.value) || 0;
+  const obj = siteObjects.get(s.id);
+  if (obj) placeSite(obj, s);
+  markDirty();
+});
+
+$('houses').addEventListener('click', async (e) => {
+  if (e.target === $('houses')) return toggleHouses(false);
+  const b = (e.target as HTMLElement).closest<HTMLElement>('[data-hs]');
+  if (!b) return;
+  const act = b.dataset.hs;
+  const s = sites.find((x) => x.id === b.closest<HTMLElement>('.hs-site')?.dataset.id);
+  if (act === 'close') toggleHouses(false);
+  if (act === 'pick') $('pboFile').click();
+  if (act === 'add' && pboOpen) {
+    const path = b.dataset.path!;
+    const t = editor.controls.target;
+    const ref: SiteRef = {
+      id: newId(),
+      pbo: pboOpen.name,
+      path,
+      name: modelName(path),
+      x: Math.round(t.x * 2) / 2,
+      y: 0,
+      z: Math.round(t.z * 2) / 2,
+      r: 0,
+      size: [8, 6, 8],
+      center: [0, 3, 0],
+    };
+    houseBusy = `Lade ${ref.name} …`;
+    renderHouses();
+    try {
+      const tpl = await loadModel(ref.pbo, ref.path);
+      if (!tpl) throw new Error('PBO nicht geöffnet');
+      sites.push(ref);
+      await syncSites();
+      houseBusy = '';
+      markDirty();
+      renderHouses(`<b>${esc(ref.name)}</b> hinzugefügt.`);
+    } catch (err) {
+      houseBusy = '';
+      renderHouses(`${esc(ref.name)} konnte nicht gelesen werden (${esc(String((err as Error).message ?? err))}).`);
+    }
+    return;
+  }
+  if (!s) return;
+  if (act === 'rot') s.r = (((s.r + 90) % 360) + 360) % 360;
+  if (act === 'here') {
+    s.x = Math.round(editor.controls.target.x * 2) / 2;
+    s.z = Math.round(editor.controls.target.z * 2) / 2;
+  }
+  if (act === 'del') sites = sites.filter((x) => x !== s);
+  void syncSites();
+  markDirty();
+  renderHouses();
+});
+
+($('pboFile') as HTMLInputElement).onchange = async (e) => {
+  const input = e.target as HTMLInputElement;
+  const f = input.files?.[0];
+  input.value = '';
+  if (!f) return;
+  houseBusy = `Lese ${f.name} …`;
+  renderHouses();
+  try {
+    const index = await openPbo(f);
+    const models = pboModels(index).map((m) => ({ name: m.name, size: m.size }));
+    pboOpen = { name: f.name, index, models };
+    houseBusy = '';
+    houseQuery = '';
+    await syncSites();
+    renderHouses(models.length ? '' : 'In dieser PBO sind keine Modelle.');
+  } catch (err) {
+    houseBusy = '';
+    renderHouses(`Datei konnte nicht gelesen werden (${esc(String((err as Error).message ?? err))}).`);
   }
 };

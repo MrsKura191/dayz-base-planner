@@ -23,6 +23,8 @@ export class Editor {
   readonly camera: THREE.PerspectiveCamera;
   readonly controls: OrbitControls;
   readonly world = new THREE.Group();
+  /** buildings loaded from the game files (see house.ts) */
+  readonly sites = new THREE.Group();
   readonly ground: THREE.Mesh;
   private grid: THREE.GridHelper;
   private levelGrid: THREE.GridHelper;
@@ -109,6 +111,7 @@ export class Editor {
     this.ring = this.makeRing();
     this.scene.add(this.ring);
     this.scene.add(this.world);
+    this.scene.add(this.sites);
     this.scene.add(this.raidGroup);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -320,6 +323,7 @@ export class Editor {
   frameAll() {
     const box = new THREE.Box3();
     for (const o of this.objects.values()) box.expandByObject(o);
+    for (const o of this.sites.children) box.expandByObject(o);
     if (box.isEmpty()) {
       this.controls.target.set(0, 1, 0);
       this.camera.position.set(22, 18, 26);
@@ -346,10 +350,21 @@ export class Editor {
         if ((o as THREE.Mesh).isMesh && !o.userData.noCollide) out.push(o);
       });
     }
+    this.sites.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh && !o.userData.noCollide && this.visibleChain(o.parent ?? o)) out.push(o);
+    });
     return out;
   }
 
   toggleDoor(obj: THREE.Object3D) {
+    // a door of a building: only that one
+    for (let p: THREE.Object3D | null = obj; p; p = p.parent) {
+      if (p.userData.houseDoor) {
+        p.userData.door.target = p.userData.door.target < 0.5 ? 1 : 0;
+        this.animating.add(p);
+        return true;
+      }
+    }
     let root: THREE.Object3D | null = obj;
     while (root && root.parent !== this.world) root = root.parent;
     if (!root) return false;
@@ -364,6 +379,10 @@ export class Editor {
   }
 
   closeAllDoors() {
+    for (const p of findDoorPivots(this.sites)) {
+      p.userData.door.target = 0;
+      this.animating.add(p);
+    }
     for (const obj of this.objects.values()) {
       for (const p of findDoorPivots(obj)) {
         p.userData.door.target = 0;
@@ -432,6 +451,13 @@ export class Editor {
       .filter((h) => ((h.object as THREE.Mesh).material as THREE.Material).visible !== false && this.visibleChain(h.object));
   }
 
+  /** surfaces of buildings, so parts can stand on their floors */
+  private intersectSites() {
+    return this.raycaster
+      .intersectObject(this.sites, true)
+      .filter((h) => !h.object.userData.walkOnly && !h.object.userData.noCollide && this.visibleChain(h.object));
+  }
+
   private pick(): number | null {
     const h = this.intersectWorld()[0];
     return h ? (h.object.userData.pieceId as number) ?? null : null;
@@ -459,7 +485,7 @@ export class Editor {
     const pt = new THREE.Vector3();
     const hitPlane = this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -planeY), pt);
     let hit: Cursor['hit'] = null;
-    const hits = [...this.intersectWorld(), ...this.raycaster.intersectObject(this.ground)].sort((a, b) => a.distance - b.distance);
+    const hits = [...this.intersectWorld(), ...this.intersectSites(), ...this.raycaster.intersectObject(this.ground)].sort((a, b) => a.distance - b.distance);
     for (const h of hits) {
       if (!h.face) continue;
       const n = h.face.normal.clone().transformDirection(h.object.matrixWorld);

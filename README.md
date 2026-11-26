@@ -15,6 +15,7 @@
 - **Raid-Pfad**: Loot-Raum markieren. Der Planer sucht den günstigsten Weg von außen (nach Ladungen oder Sprit), zeichnet ihn rot ein und meldet Schwachstellen wie Fenster ohne Gitter oder Wände, über die man klettern kann.
 - **Laufmodus** (`V`): WASD, rennen, springen, ducken, hinlegen, Türen öffnen (`F`), No-Clip (`N`). Wände und Decken blockieren.
 - **In DayZ ansehen:** Export als `.dze` für den DayZ Editor, mit den echten Aftermath-Klassennamen. Den Bauplatz übernimmst du aus einer Editor-Datei. Über das Pläne-Menü lassen sich Aftermath-Bauteile aus einer `.dze` auch zurück in den Planer importieren.
+- **Gebäude aus DayZ** (Haus-Symbol): Ein einzelnes Gebäude aus den eigenen Spieldateien laden (z. B. `DayZ\Addons\structures_residential.pbo`) und darin oder daneben bauen. Die PBO wird nur im Browser gelesen, nichts wird hochgeladen. Türen öffnen sich im Laufmodus, Treppen sind begehbar. Im Plan stehen nur Name und Position des Gebäudes; das Modell wird lokal im Browser zwischengespeichert.
 - **Pläne** werden im Browser gespeichert. Du kannst sie als JSON exportieren und importieren, per **Link teilen** (der Plan steckt komprimiert im Link) und als Screenshot speichern.
 
 ## Datenquelle
@@ -49,4 +50,4 @@ Vite, TypeScript und Three.js, ohne Backend. Ein Push auf `main` baut die Seite 
 
 ## Hinweis
 
-Fanprojekt ohne Verbindung zu Aftermath Gaming oder Bohemia Interactive. Alle Modelle und Texturen werden im Code erzeugt, es werden keine Spieldateien verwendet.
+Fanprojekt ohne Verbindung zu Aftermath Gaming oder Bohemia Interactive. Alle Bauteile und Texturen werden im Code erzeugt. Das Repo und die Seite enthalten keine Spieldateien. Gebäude aus DayZ liest der Planer nur auf Wunsch aus den Spieldateien des Nutzers, lokal im Browser (Lesecode für das Modellformat nach der MIT-lizenzierten Vorlage [rvost/bis-file-formats](https://github.com/rvost/bis-file-formats)).
