@@ -5,7 +5,9 @@
 ## Funktionen
 
 - **Bauen in 3D** mit Einrasten wie im Spiel: Böden an Bodenkanten und auf Wänden darunter, Wände und Türen an Bodenkanten, Halb- und Drittelwände übereinander, Treppen auf Böden, Wendeltreppen übereinander, Palisaden an Palisaden, Fenstergitter an Fensterwänden. Mit `X` schaltest du auf freie Platzierung um.
-- **Ebenen** (Erdgeschoss bis Ebene 7). Ebenen über der aktiven lassen sich ausblenden.
+- **Feinjustieren**: Das Teil in der Hand oder ein ausgewähltes Teil mit den Pfeiltasten (entlang des Bodens, passend zur Blickrichtung) und `Bild↑`/`Bild↓` (Höhe) in 5-cm-Schritten verschieben, mit `Shift` 25 cm, mit `Alt` 1 cm. `Alt`+`Q`/`E` dreht um 1°.
+- **Freie Kamera** wie im Noclip: mit der Maus umsehen, `WASD` fliegen, `Leertaste` hoch, `C` oder `Strg` runter, `Shift` schneller.
+- **Ebenen** (Erdgeschoss bis Ebene 7, Tasten `0`–`7`). Ebenen über der aktiven lassen sich ausblenden.
 - **Regeln aus dem Wiki**: höchstens 15 Türen, Abstand zwischen Türen, Territorium mit 25 m Radius um die Plot Pole, nur eine Plot Pole.
 - **Materialliste** mit Kit-Auflösung (Shutter-Türen brauchen ein Garage-Door-Kit). Wahlweise wird bis zu Scrap bzw. Logs heruntergerechnet.
 - **Werkzeuge** für die Werkbank, **Crafting-Vorgänge**, **Bedarf pro Ebene** und eine **Einkaufsliste** zum Kopieren.

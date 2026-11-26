@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { FlyCam } from './flycam';
 import { floorTop, GRID, levelTop, MAX_LEVEL, TERRITORY_RADIUS } from './constants';
 import { PARTS } from './data';
 import { createGhost, createPartObject, findDoorPivots, setGhostValid, setHighlight, stepDoor } from './meshes';
@@ -21,7 +21,7 @@ export class Editor {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
-  readonly controls: OrbitControls;
+  readonly controls: FlyCam;
   readonly world = new THREE.Group();
   /** buildings loaded from the game files (see house.ts) */
   readonly sites = new THREE.Group();
@@ -114,18 +114,13 @@ export class Editor {
     this.scene.add(this.sites);
     this.scene.add(this.raidGroup);
 
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.12;
-    this.controls.maxPolarAngle = Math.PI * 0.495;
-    this.controls.minDistance = 2;
-    this.controls.maxDistance = 220;
-    this.controls.target.set(0, 1, 0);
-    this.updateMouseButtons();
+    this.controls = new FlyCam(this.camera, this.renderer.domElement, this.keys);
+    this.controls.lookAt(new THREE.Vector3(0, 1, 0));
+    this.controls.leftLooks = () => !this.activePart && this.moving == null && !this.raidPick && !this.frameHook;
 
     const el = this.renderer.domElement;
     el.addEventListener('pointermove', (e) => this.onMove(e));
-    // capture phase: runs before OrbitControls, so grabbing a part does not orbit
+    // capture phase: runs before the camera, so grabbing a part does not turn the view
     el.addEventListener(
       'pointerdown',
       (e) => {
@@ -190,13 +185,7 @@ export class Editor {
     this.camera.updateProjectionMatrix();
   }
 
-  private updateMouseButtons() {
-    this.controls.mouseButtons = {
-      LEFT: (this.activePart ? -1 : THREE.MOUSE.ROTATE) as THREE.MOUSE,
-      MIDDLE: THREE.MOUSE.PAN,
-      RIGHT: THREE.MOUSE.ROTATE,
-    };
-  }
+
 
   // ------------------------------------------------------------- syncing
   private sync() {
@@ -271,6 +260,7 @@ export class Editor {
       this.scene.remove(this.ghost);
       this.ghost = null;
     }
+    if (id !== this.activePart) this.resetOffset();
     this.activePart = id;
     this.placement = null;
     this.rotIndex = 0;
@@ -280,7 +270,6 @@ export class Editor {
       this.ghost.visible = false;
       this.scene.add(this.ghost);
     }
-    this.updateMouseButtons();
     this.refreshPreview();
     this.updateRing();
     if (!id) this.ev.onPreview?.(null);
@@ -320,20 +309,67 @@ export class Editor {
     this.ev.onSelect?.(id != null ? this.store.pieces.get(id) ?? null : null);
   }
 
+  /** where the camera looks, on the ground of the active storey */
+  focusPoint() {
+    return this.controls.focus(levelTop(this.level));
+  }
+
+  // ------------------------------------------------------- fine adjustment
+  /** extra shift and turn on top of the snapped spot, for the part in hand */
+  offset = new THREE.Vector3();
+  offsetYaw = 0;
+
+  hasOffset() {
+    return this.offset.lengthSq() > 1e-10 || Math.abs(this.offsetYaw) > 1e-6;
+  }
+
+  resetOffset() {
+    this.offset.set(0, 0, 0);
+    this.offsetYaw = 0;
+    this.refreshPreview();
+  }
+
+  /** World axes closest to the view: forward and right along the ground. */
+  viewAxes() {
+    const f = this.controls.forward();
+    const fwd = Math.abs(f.x) > Math.abs(f.z) ? new THREE.Vector3(Math.sign(f.x), 0, 0) : new THREE.Vector3(0, 0, Math.sign(f.z) || -1);
+    const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0));
+    return { fwd, right };
+  }
+
+  /** Shift the part in hand, or else the selected part. Returns what moved. */
+  nudge(v: THREE.Vector3, yaw = 0): 'hand' | 'piece' | null {
+    if (this.activePart || this.moving != null) {
+      this.offset.add(v);
+      this.offsetYaw += yaw;
+      this.refreshPreview();
+      return 'hand';
+    }
+    if (this.selected != null) {
+      const p = this.store.pieces.get(this.selected);
+      if (!p) return null;
+      const r = (n: number) => Math.round(n * 1000) / 1000;
+      this.store.update(p.id, { x: r(p.x + v.x), y: r(p.y + v.y), z: r(p.z + v.z), r: p.r + yaw });
+      return 'piece';
+    }
+    return null;
+  }
+
   frameAll() {
     const box = new THREE.Box3();
     for (const o of this.objects.values()) box.expandByObject(o);
     for (const o of this.sites.children) box.expandByObject(o);
     if (box.isEmpty()) {
-      this.controls.target.set(0, 1, 0);
       this.camera.position.set(22, 18, 26);
+      this.controls.lookAt(new THREE.Vector3(0, 1, 0));
       return;
     }
     const c = box.getCenter(new THREE.Vector3());
     const r = Math.max(8, box.getSize(new THREE.Vector3()).length() * 0.75);
-    const dir = this.camera.position.clone().sub(this.controls.target).normalize();
-    this.controls.target.copy(c);
+    const dir = this.camera.position.clone().sub(this.focusPoint()).normalize();
+    if (dir.y < 0.25) dir.setY(0.45).normalize();
     this.camera.position.copy(c).addScaledVector(dir, r * 1.4);
+    this.controls.lookAt(c);
   }
 
   screenshot(): string {
@@ -516,9 +552,13 @@ export class Editor {
     }
     const def = PARTS[part];
     const others = this.otherPieces();
-    const pl = computePlacement(def, this.cursor(), {
+    let pl = computePlacement(def, this.cursor(), {
       pieces: others, level: this.level, rotIndex: this.rotIndex, freeYaw: this.freeYaw, snap: this.snap,
     });
+    if (pl && this.hasOffset()) {
+      const o = this.offset;
+      pl = { ...pl, x: pl.x + o.x, y: pl.y + o.y, z: pl.z + o.z, r: pl.r + this.offsetYaw };
+    }
     this.placement = pl;
     if (!pl) {
       this.ghost.visible = false;
@@ -603,6 +643,7 @@ export class Editor {
     this.setHover(null);
     this.moving = id;
     this.rotIndex = 0;
+    this.resetOffset();
     this.freeYaw = p.r;
     if (this.level !== p.l && PARTS[p.t].kind !== 'palisade' && PARTS[p.t].kind !== 'plotpole') this.setLevel(p.l);
     this.ghost = createGhost(p.t);
@@ -642,37 +683,12 @@ export class Editor {
   private frame() {
     const dt = Math.min(0.05, this.clock.getDelta());
     if (this.frameHook) this.frameHook(dt);
-    else {
-      this.keyboardPan(dt);
-      this.controls.update();
-    }
+    else if (this.controls.update(dt) && (this.activePart || this.moving != null)) this.refreshPreview();
     for (const p of this.animating) if (!stepDoor(p, dt)) this.animating.delete(p);
-    const t = this.frameHook ? this.camera.position : this.controls.target;
+    const t = this.frameHook ? this.camera.position : this.focusPoint();
     this.sun.position.set(t.x + 35, 55, t.z + 20);
     this.sun.target.position.set(t.x, 0, t.z);
     this.renderer.render(this.scene, this.camera);
   }
 
-  private keyboardPan(dt: number) {
-    const k = this.keys;
-    if (k.has('control') || k.has('meta')) return;
-    let f = 0;
-    let s = 0;
-    if (k.has('w') || k.has('arrowup')) f += 1;
-    if (k.has('s') || k.has('arrowdown')) f -= 1;
-    if (k.has('d') || k.has('arrowright')) s += 1;
-    if (k.has('a') || k.has('arrowleft')) s -= 1;
-    if (!f && !s) return;
-    const dist = this.camera.position.distanceTo(this.controls.target);
-    const speed = Math.max(6, dist * 0.9) * dt * (k.has('shift') ? 2.5 : 1);
-    const fwd = new THREE.Vector3();
-    this.camera.getWorldDirection(fwd);
-    fwd.y = 0;
-    fwd.normalize();
-    const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0));
-    const move = fwd.multiplyScalar(f * speed).addScaledVector(right, s * speed);
-    this.controls.target.add(move);
-    this.camera.position.add(move);
-    if (this.activePart) this.refreshPreview();
-  }
 }

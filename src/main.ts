@@ -511,11 +511,16 @@ function renderStatus() {
   const v = editor.verdict;
   const mode = editor.placement ? (editor.placement.snapped ? 'Eingerastet' : 'Frei') : d.kind === 'bars' ? 'Zeige auf ein Fenster' : 'Zeige auf die Fläche';
   s.hidden = false;
-  s.innerHTML = `<b>${esc(d.name)}</b><span class="mode">${mode}</span>
+  const o = editor.offset;
+  const cm = (v: number) => `${v >= 0 ? '+' : ''}${Math.round(v * 100)}`;
+  const off = editor.hasOffset()
+    ? `<span class="mode">Versatz ${cm(o.x)} / ${cm(o.y)} / ${cm(o.z)} cm${Math.abs(editor.offsetYaw) > 1e-6 ? ` · ${Math.round((editor.offsetYaw * 180) / Math.PI)}°` : ''} <kbd>Pos1</kbd> zurück</span>`
+    : '';
+  s.innerHTML = `<b>${esc(d.name)}</b><span class="mode">${mode}</span>${off}
     ${v && !v.ok ? `<span class="bad">${esc(v.reason ?? '')}</span>` : ''}
     ${moving
-      ? '<span class="k">Verschieben: <kbd>Loslassen</kbd> absetzen · <kbd>Q</kbd><kbd>E</kbd> drehen · <kbd>X</kbd> Einrasten · <kbd>Esc</kbd> abbrechen</span>'
-      : '<span class="k"><kbd>Klick</kbd> setzen · <kbd>Q</kbd><kbd>E</kbd> drehen · <kbd>X</kbd> Einrasten · <kbd>Rechtsklick</kbd>/<kbd>Esc</kbd> fertig</span>'}`;
+      ? '<span class="k">Verschieben: <kbd>Loslassen</kbd> absetzen · <kbd>Q</kbd><kbd>E</kbd> drehen · <kbd>←↑↓→</kbd> <kbd>Bild↑↓</kbd> fein · <kbd>Esc</kbd> abbrechen</span>'
+      : '<span class="k"><kbd>Klick</kbd> setzen · <kbd>Q</kbd><kbd>E</kbd> drehen · <kbd>←↑↓→</kbd> <kbd>Bild↑↓</kbd> fein verschieben · <kbd>X</kbd> Einrasten · <kbd>Rechtsklick</kbd>/<kbd>Esc</kbd> fertig</span>'}`;
 }
 
 function renderSelection() {
@@ -564,14 +569,20 @@ function toggleHelp(force?: boolean) {
       ${row('<kbd>Rechtsklick</kbd> / <kbd>Esc</kbd>', 'Bauen beenden')}
       ${row('<kbd>Entf</kbd>', 'Auswahl entfernen')}
       ${row('<kbd>Strg</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd>', 'Rückgängig / Wiederholen')}
-      ${row('<kbd>Bild↑</kbd> <kbd>Bild↓</kbd>', 'Ebene wechseln')}
+      ${row('<kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd>', 'Fein verschieben, 5 cm (Teil in der Hand oder ausgewählt)')}
+      ${row('<kbd>Bild↑</kbd> <kbd>Bild↓</kbd>', 'Fein hoch / runter, 5 cm')}
+      ${row('<kbd>Shift</kbd> / <kbd>Alt</kbd> dazu', '25 cm / 1 cm; <kbd>Alt</kbd>+<kbd>Q</kbd>/<kbd>E</kbd> dreht um 1°')}
+      ${row('<kbd>Pos1</kbd>', 'Versatz des Teils in der Hand zurücksetzen')}
+      ${row('<kbd>0</kbd> … <kbd>7</kbd>', 'Ebene wechseln (0 = Erdgeschoss)')}
     </div>
     <h3>Kamera</h3>
     <div class="grid">
-      ${row('<kbd>Rechte Maus</kbd> ziehen', 'Drehen (ohne aktives Teil auch links)')}
-      ${row('<kbd>Mittlere Maus</kbd> ziehen', 'Verschieben')}
-      ${row('<kbd>Mausrad</kbd>', 'Zoomen')}
-      ${row('<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>', 'Kamera bewegen')}
+      ${row('<kbd>Rechte Maus</kbd> ziehen', 'Umsehen (ohne Teil in der Hand auch links)')}
+      ${row('<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>', 'Fliegen in Blickrichtung')}
+      ${row('<kbd>Leertaste</kbd> / <kbd>C</kbd> oder <kbd>Strg</kbd>', 'Hoch / runter')}
+      ${row('<kbd>Shift</kbd> / <kbd>Alt</kbd>', 'Schneller / langsamer')}
+      ${row('<kbd>Mausrad</kbd>', 'Vor / zurück')}
+      ${row('<kbd>Mittlere Maus</kbd> ziehen', 'Seitlich und hoch/runter schieben')}
       ${row('<kbd>F</kbd>', 'Ganze Basis zeigen')}
       ${row('<kbd>V</kbd>', 'Laufmodus')}
       ${row('<kbd>T</kbd>', 'Territorium ein/aus')}
@@ -606,7 +617,40 @@ window.addEventListener('keydown', (e) => {
     store.redo();
     return;
   }
-  if (ctrl) return;
+  if (ctrl) {
+    // Ctrl alone flies down; keep the browser from saving, bookmarking or selecting meanwhile
+    if (['s', 'a', 'd', ' '].includes(k)) e.preventDefault();
+    return;
+  }
+  // fine adjustment: arrows along the ground (relative to the view), Page Up/Down height
+  const step = e.altKey ? 0.01 : e.shiftKey ? 0.25 : 0.05;
+  const ax = editor.viewAxes();
+  const nudges: Record<string, THREE.Vector3> = {
+    arrowup: ax.fwd.clone().multiplyScalar(step),
+    arrowdown: ax.fwd.clone().multiplyScalar(-step),
+    arrowright: ax.right.clone().multiplyScalar(step),
+    arrowleft: ax.right.clone().multiplyScalar(-step),
+    pageup: new THREE.Vector3(0, step, 0),
+    pagedown: new THREE.Vector3(0, -step, 0),
+  };
+  if (nudges[k]) {
+    e.preventDefault();
+    if (editor.nudge(nudges[k])) {
+      renderStatus();
+      renderSelection();
+    } else toast('Erst ein Teil wählen oder in die Hand nehmen, dann fein verschieben');
+    return;
+  }
+  if (/^[0-7]$/.test(k)) {
+    editor.setLevel(Number(k));
+    renderLevels();
+    return;
+  }
+  if (k === ' ') {
+    e.preventDefault(); // Space flies up; do not press the focused button
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    return;
+  }
   switch (k) {
     case 'escape':
       if (!$('dayz').hidden) toggleDayz(false);
@@ -620,11 +664,22 @@ window.addEventListener('keydown', (e) => {
       renderStatus();
       break;
     case 'q':
-      editor.rotate(-1, e.shiftKey);
-      break;
     case 'e':
-    case 'r':
-      editor.rotate(1, e.shiftKey);
+    case 'r': {
+      const dir = k === 'q' ? -1 : 1;
+      const inHand = editor.activePart || editor.moving != null;
+      if (e.altKey) {
+        e.preventDefault();
+        editor.nudge(new THREE.Vector3(), (dir * Math.PI) / 180); // 1°
+      } else if (inHand) editor.rotate(dir, e.shiftKey);
+      else if (editor.selected != null) editor.nudge(new THREE.Vector3(), dir * (e.shiftKey ? Math.PI / 2 : Math.PI / 12));
+      renderStatus();
+      break;
+    }
+    case 'home':
+      e.preventDefault();
+      editor.resetOffset();
+      renderStatus();
       break;
     case 'x':
       $('tbSnap').click();
@@ -632,16 +687,6 @@ window.addEventListener('keydown', (e) => {
     case 'delete':
     case 'backspace':
       editor.deleteSelected();
-      break;
-    case 'pageup':
-      e.preventDefault();
-      editor.setLevel(editor.level + 1);
-      renderLevels();
-      break;
-    case 'pagedown':
-      e.preventDefault();
-      editor.setLevel(editor.level - 1);
-      renderLevels();
       break;
     case 'f':
       editor.frameAll();
@@ -657,6 +702,10 @@ window.addEventListener('keydown', (e) => {
       toggleHelp();
       break;
   }
+});
+
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'Alt') e.preventDefault();
 });
 
 // --------------------------------------------------------------- wiring
@@ -971,7 +1020,7 @@ $('houses').addEventListener('click', async (e) => {
   if (act === 'pick') $('pboFile').click();
   if (act === 'add' && pboOpen) {
     const path = b.dataset.path!;
-    const t = editor.controls.target;
+    const t = editor.focusPoint();
     const ref: SiteRef = {
       id: newId(),
       pbo: pboOpen.name,
@@ -1003,8 +1052,9 @@ $('houses').addEventListener('click', async (e) => {
   if (!s) return;
   if (act === 'rot') s.r = (((s.r + 90) % 360) + 360) % 360;
   if (act === 'here') {
-    s.x = Math.round(editor.controls.target.x * 2) / 2;
-    s.z = Math.round(editor.controls.target.z * 2) / 2;
+    const t = editor.focusPoint();
+    s.x = Math.round(t.x * 2) / 2;
+    s.z = Math.round(t.z * 2) / 2;
   }
   if (act === 'del') sites = sites.filter((x) => x !== s);
   void syncSites();

@@ -28,7 +28,7 @@ export class WalkMode {
   private eye = EYE.stand;
   private ray = new THREE.Raycaster();
   private colliders: THREE.Object3D[] = [];
-  private savedCam = { pos: new THREE.Vector3(), target: new THREE.Vector3(), showAll: true };
+  private savedCam = { pos: new THREE.Vector3(), yaw: 0, pitch: 0, showAll: true };
   private hint: string | null = null;
 
   constructor(private ed: Editor, private hud: WalkHud, private onExit: () => void) {
@@ -60,7 +60,8 @@ export class WalkMode {
     const ed = this.ed;
     this.active = true;
     this.savedCam.pos.copy(ed.camera.position);
-    this.savedCam.target.copy(ed.controls.target);
+    this.savedCam.yaw = ed.controls.yaw;
+    this.savedCam.pitch = ed.controls.pitch;
     this.savedCam.showAll = ed.showAll;
     ed.setActivePart(null);
     ed.select(null);
@@ -69,7 +70,7 @@ export class WalkMode {
     this.colliders = ed.colliders();
 
     // spawn on the surface below the orbit target, on the active storey
-    const t = ed.controls.target;
+    const t = ed.focusPoint();
     const top = levelTop(ed.level) + 1.2;
     this.ray.set(new THREE.Vector3(t.x, top, t.z), new THREE.Vector3(0, -1, 0));
     const h = this.ray.intersectObjects(this.colliders, false)[0];
@@ -100,9 +101,10 @@ export class WalkMode {
     ed.camera.near = 0.05;
     ed.camera.updateProjectionMatrix();
     ed.camera.position.copy(this.savedCam.pos);
-    ed.controls.target.copy(this.savedCam.target);
+    ed.controls.yaw = this.savedCam.yaw;
+    ed.controls.pitch = this.savedCam.pitch;
     ed.camera.up.set(0, 1, 0);
-    ed.camera.lookAt(this.savedCam.target);
+    ed.controls.apply();
     ed.setShowAll(this.savedCam.showAll);
     ed.setInteractive(true);
     ed.closeAllDoors();
