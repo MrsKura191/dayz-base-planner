@@ -187,6 +187,8 @@ export interface OdolMaterial {
   name: string;
   /** stage textures in order (stage 1 first) */
   textures: string[];
+  /** texture generator used by each stage */
+  texGens: number[];
   /** per texture generator: UV source and 4x3 matrix */
   uvTransforms: { source: number; m: number[] }[];
 }
@@ -199,6 +201,8 @@ export interface OdolSection {
   material: string;
   /** stage textures of the section's material (empty when it has none) */
   stages: string[];
+  /** the material itself (null when the section names it only) */
+  mat: OdolMaterial | null;
 }
 
 export interface OdolLod {
@@ -207,6 +211,8 @@ export interface OdolLod {
   points: Float32Array;
   /** u, v per vertex (first UV set) */
   uv: Float32Array | null;
+  /** all UV sets (index 0 is `uv`); null where a set is one constant value */
+  uvSets: (Float32Array | null)[];
   faces: Uint32Array[];
   sections: OdolSection[];
   selections: { name: string; faces: number[]; vertices: number[] }[];
@@ -251,11 +257,12 @@ function readMaterial(r: R): OdolMaterial {
   const stages = v > 6 ? r.count(64) : 0;
   const gens = v > 8 ? r.count(64) : stages;
   const textures: string[] = [];
+  const texGens: number[] = [];
   const uvTransforms: { source: number; m: number[] }[] = [];
   const stage = () => {
     if (v >= 5) r.skip(4);
     textures.push(r.asciiz());
-    if (v >= 8) r.skip(4);
+    texGens.push(v >= 8 ? r.u32() : textures.length - 1);
     if (v >= 11) r.skip(1);
   };
   const transform = () => {
@@ -276,8 +283,9 @@ function readMaterial(r: R): OdolMaterial {
   if (v >= 10) {
     stage();
     textures.pop(); // the TI stage, not a colour texture
+    texGens.pop();
   }
-  return { name, textures, uvTransforms };
+  return { name, textures, texGens, uvTransforms };
 }
 
 function readLod(r: R, resolution: number): OdolLod {
@@ -347,7 +355,7 @@ function readLod(r: R, resolution: number): OdolLod {
       r.skip(4 * r.count(1000));
       if (v >= 67 && r.i32() >= 1) r.skip(44);
     } else r.skip(4);
-    sections.push({ from: firstFaceAt(lo), to: firstFaceAt(hi), texture: tex >= 0 ? (textures[tex] ?? '') : '', material: matName, stages: mat >= 0 ? (materials[mat]?.textures ?? []) : [] });
+    sections.push({ from: firstFaceAt(lo), to: firstFaceAt(hi), texture: tex >= 0 ? (textures[tex] ?? '') : '', material: matName, stages: mat >= 0 ? (materials[mat]?.textures ?? []) : [], mat: mat >= 0 ? (materials[mat] ?? null) : null });
   }
 
   const nSel = r.count(100_000);
@@ -401,14 +409,15 @@ function readLod(r: R, resolution: number): OdolLod {
   };
   const uv = uvSet();
   const sets2 = r.u32();
-  for (let i = 1; i < sets2; i++) uvSet();
+  const uvSets: (Float32Array | null)[] = [uv];
+  for (let i = 1; i < sets2; i++) uvSets.push(uvSet());
   const pts = r.compressedArray(12);
   if (vertexCount >= 0 && pts.n !== vertexCount) throw new Error('ODOL: vertex count mismatch');
   const points = new Float32Array(pts.n * 3);
   const pdv = new DataView(pts.data.buffer, pts.data.byteOffset, pts.data.byteLength);
   for (let i = 0; i < pts.n * 3; i++) points[i] = pdv.getFloat32(i * 4, true);
   for (const f of faces) for (const k of f) if (k >= pts.n) throw new Error('ODOL: face index out of range');
-  return { resolution, points, uv: uv && uv.length === pts.n * 2 ? uv : null, faces, sections, selections, properties, textures };
+  return { resolution, points, uv: uv && uv.length === pts.n * 2 ? uv : null, uvSets: uvSets.map((u) => (u && u.length === pts.n * 2 ? u : null)), faces, sections, selections, properties, textures };
 }
 
 /**

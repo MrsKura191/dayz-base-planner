@@ -166,11 +166,23 @@ interface Look {
   map?: string;
   /** texture with cut-out alpha (fences, leaves, frames) */
   cutout?: boolean;
-  /** multi-material: four layer textures and the mask; drawn in their mixed average colour for now */
-  multi?: string[];
+  /** multi-material: four tiling layers mixed by a mask, plus macro and ambient-shadow maps */
+  multi?: MultiSpec;
 }
 
-const lookKey = (l: Look) => [l.color, l.glass ? 1 : 0, l.roughness ?? 0.9, l.map ?? '', l.cutout ? 1 : 0, (l.multi ?? []).join(';')].join('|');
+interface Stage {
+  tex: string;
+  /** 0: first UV set (tiling), 1: second UV set (unique layout) */
+  set: number;
+  /** u' = dot((u, v, 1), tu), v' = dot((u, v, 1), tv) */
+  tu: [number, number, number];
+  tv: [number, number, number];
+}
+/** layers 1-4, mask, macro, ambient shadow */
+type MultiSpec = Stage[];
+
+const lookKey = (l: Look) =>
+  [l.color, l.glass ? 1 : 0, l.roughness ?? 0.9, l.map ?? '', l.cutout ? 1 : 0, (l.multi ?? []).map((s) => [s.tex, s.set, ...s.tu, ...s.tv].join(',')).join(';')].join('|');
 
 function colourGuess(s: string): Look {
   if (/roof|strecha|tiles?_|ceramic|tile_roof/.test(s)) return { color: 0x7a4a3c };
@@ -195,10 +207,20 @@ function lookFor(sec: OdolSection): Look {
   const proc = /color\(([\d.]+),([\d.]+),([\d.]+)/.exec(texture);
   if (proc) return { color: new THREE.Color(+proc[1], +proc[2], +proc[3]).getHex(), glass };
   if (glass) return { color: 0x9fb8c4, glass: true };
-  // multi-materials: stages 1-4 are the layers, stage 5 the mask
+  // multi-materials: stages 1-4 are the layers, 5 the mask, 10 the macro map, 11 the ambient shadow
+  const mt = sec.mat;
   const st = sec.stages;
-  if (st.length >= 5 && /_mask\.paa$/i.test(st[4]) && st.slice(0, 4).every((x) => /\.paa$/i.test(x) || /color\(/.test(x))) {
-    return { ...guess, multi: st.slice(0, 5) };
+  if (mt && st.length >= 5 && /_mask\.paa$/i.test(st[4]) && st.slice(0, 4).every((x) => /\.paa$/i.test(x) || /color\(/.test(x))) {
+    const stage = (i: number, fallback: string): Stage => {
+      const tex = st[i] && (/\.paa$/i.test(st[i]) || /color\(/.test(st[i])) ? st[i] : fallback;
+      const g = mt.uvTransforms[mt.texGens[i] ?? -1];
+      const m = g?.m ?? [1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
+      return { tex, set: g && g.source === 5 ? 1 : 0, tu: [m[0], m[3], m[9]], tv: [m[1], m[4], m[10]] };
+    };
+    const multi = [0, 1, 2, 3, 4].map((i) => stage(i, ''));
+    multi.push(/_mc\.paa$|,mc\)/i.test(st[9] ?? '') ? stage(9, '') : { ...multi[4], tex: '#(argb,8,8,3)color(0,0,0,0,mc)' });
+    multi.push(/_a?d?s\.paa$|,as\)/i.test(st[10] ?? '') ? stage(10, '') : { ...multi[4], tex: '#(argb,8,8,3)color(1,1,1,1,as)' });
+    return { ...guess, multi };
   }
   return guess;
 }
@@ -248,17 +270,25 @@ async function textureBytes(path: string): Promise<Uint8Array | null> {
 const texJobs = new Map<string, Promise<THREE.Texture | null>>();
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-function loadTexture(path: string): Promise<THREE.Texture | null> {
-  const key = norm(path);
+function loadTexture(path: string, srgb = true): Promise<THREE.Texture | null> {
+  const key = norm(path) + (srgb ? '' : '|raw');
   const have = texJobs.get(key);
   if (have) return have;
   const job = (async () => {
+    const proc = /color\(([\d.]+),([\d.]+),([\d.]+),([\d.]+)/.exec(path);
+    if (proc) {
+      const px = new Uint8Array([1, 2, 3, 4].map((i) => Math.round(+proc[i] * 255)));
+      const t = new THREE.DataTexture(px, 1, 1, THREE.RGBAFormat);
+      if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+      t.needsUpdate = true;
+      return t;
+    }
     const b = await textureBytes(path);
     if (!b) return null;
     await tick(); // decode one texture at a time without freezing the page
     const img = readPaa(b, 1024);
     const tex = new THREE.DataTexture(img.rgba, img.width, img.height, THREE.RGBAFormat);
-    tex.colorSpace = THREE.SRGBColorSpace;
+    if (srgb) tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.magFilter = THREE.LinearFilter;
     tex.minFilter = THREE.LinearMipmapLinearFilter;
@@ -298,19 +328,82 @@ async function texturize(m: THREE.MeshStandardMaterial) {
     m.userData.textured = true;
     m.needsUpdate = true;
   } else if (look.multi) {
-    // mixed walls: the layers' average colours, weighted by how much of the mask each covers
-    const [layers, mask] = [look.multi.slice(0, 4), look.multi[4]];
-    const cols = await Promise.all(layers.map(averageOf));
-    const mk = await averageOf(mask);
-    if (!mk || cols.some((c) => !c)) return;
-    const w = [Math.max(0, 1 - mk.r - mk.g - mk.b), mk.r, mk.g, mk.b];
-    const sum = w.reduce((a, b) => a + b, 0) || 1;
-    const c = new THREE.Color(0, 0, 0);
-    cols.forEach((col, i) => c.add(col!.clone().multiplyScalar(w[i] / sum)));
-    m.color.copy(c);
+    const spec = look.multi;
+    if (!m.userData.averaged) {
+      // quick stand-in: the layers' average colours, weighted by the mask
+      const cols = await Promise.all(spec.slice(0, 4).map((s) => averageOf(s.tex)));
+      const mk = await averageOf(spec[4].tex);
+      if (mk && cols.every((c) => c)) {
+        const w = [Math.max(0, 1 - mk.r - mk.g - mk.b), mk.r, mk.g, mk.b];
+        const sum = w.reduce((a, b) => a + b, 0) || 1;
+        const c = new THREE.Color(0, 0, 0);
+        cols.forEach((col, i) => c.add(col!.clone().multiplyScalar(w[i] / sum)));
+        m.color.copy(c);
+        m.userData.averaged = true;
+      }
+    }
+    const texs = await Promise.all(spec.map((s, i) => loadTexture(s.tex, i < 4)));
+    if (texs.some((x) => !x)) return;
+    useMultiShader(m, spec, texs as THREE.Texture[]);
+    m.color.set(0xffffff);
     m.userData.textured = true;
     m.needsUpdate = true;
   }
+}
+
+/**
+ * DayZ multi-material, simplified: four tiling layers chosen by the mask
+ * (black = layer 1, red = 2, green = 3, blue = 4), the macro map laid over as
+ * an overlay (grey is neutral) and the ambient-shadow map darkening corners.
+ * Normal, specular and detail maps are left out.
+ */
+function useMultiShader(m: THREE.MeshStandardMaterial, spec: MultiSpec, texs: THREE.Texture[]) {
+  const uniforms = {
+    mL0: { value: texs[0] },
+    mL1: { value: texs[1] },
+    mL2: { value: texs[2] },
+    mL3: { value: texs[3] },
+    mMask: { value: texs[4] },
+    mMacro: { value: texs[5] },
+    mShadow: { value: texs[6] },
+    mTU: { value: spec.map((s) => new THREE.Vector3(...s.tu)) },
+    mTV: { value: spec.map((s) => new THREE.Vector3(...s.tv)) },
+    mSet: { value: spec.map((s) => s.set) },
+  };
+  m.customProgramCacheKey = () => 'dayz-multi';
+  m.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec2 uvA;\nattribute vec2 uvB;\nvarying vec2 vUvA;\nvarying vec2 vUvB;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvUvA = uvA;\nvUvB = uvB;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+varying vec2 vUvA;
+varying vec2 vUvB;
+uniform sampler2D mL0, mL1, mL2, mL3, mMask, mMacro, mShadow;
+uniform vec3 mTU[7];
+uniform vec3 mTV[7];
+uniform float mSet[7];
+vec2 mUv(int i) {
+  vec3 b = vec3(mSet[i] > 0.5 ? vUvB : vUvA, 1.0);
+  return vec2(dot(b, mTU[i]), dot(b, mTV[i]));
+}`,
+      )
+      .replace(
+        '#include <map_fragment>',
+        `vec4 mk = texture2D(mMask, mUv(4));
+float w1 = mk.r, w2 = mk.g, w3 = mk.b;
+float w0 = clamp(1.0 - w1 - w2 - w3, 0.0, 1.0);
+vec3 mcol = (texture2D(mL0, mUv(0)).rgb * w0 + texture2D(mL1, mUv(1)).rgb * w1
+  + texture2D(mL2, mUv(2)).rgb * w2 + texture2D(mL3, mUv(3)).rgb * w3) / max(w0 + w1 + w2 + w3, 1e-3);
+vec4 mc = texture2D(mMacro, mUv(5));
+mcol = mix(mcol, mcol * mc.rgb * 2.0, mc.a);
+mcol *= mix(0.5, 1.0, texture2D(mShadow, mUv(6)).g);
+diffuseColor.rgb *= mcol;`,
+      );
+  };
 }
 
 /** After more PBOs were opened: fill in textures that were missing. */
@@ -342,6 +435,8 @@ function meshOf(lod: OdolLod, faceIds: number[], ground: number, origin = new TH
   const used = new Map<number, number>();
   const pos: number[] = [];
   const uv: number[] = [];
+  const uvB: number[] = [];
+  const setB = lod.uvSets[1] ?? lod.uv;
   const index: number[] = [];
   const groups: { start: number; count: number; mat: THREE.Material }[] = [];
   for (const { look, tris } of byLook.values()) {
@@ -353,6 +448,7 @@ function meshOf(lod: OdolLod, faceIds: number[], ground: number, origin = new TH
         k = pos.length / 3;
         pos.push(p.x, p.y, p.z);
         if (lod.uv) uv.push(lod.uv[vi * 2], lod.uv[vi * 2 + 1]);
+        if (setB) uvB.push(setB[vi * 2], setB[vi * 2 + 1]);
         used.set(vi, k);
       }
       index.push(k);
@@ -361,7 +457,11 @@ function meshOf(lod: OdolLod, faceIds: number[], ground: number, origin = new TH
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  if (uv.length) geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  if (uv.length) {
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setAttribute('uvA', geo.getAttribute('uv'));
+  }
+  if (uvB.length) geo.setAttribute('uvB', new THREE.Float32BufferAttribute(uvB, 2));
   geo.setIndex(index);
   geo.computeVertexNormals();
   geo.computeBoundingSphere();
