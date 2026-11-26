@@ -217,7 +217,12 @@ function readBinary(buf: ArrayBuffer): DzeFile {
     o += n;
     return s;
   };
-  const vec = (): [number, number, number] => [float(), float(), float()];
+  // vectors are written as an element count (3) followed by the floats
+  const vec = (): [number, number, number] => {
+    const n = int();
+    if (n !== 3) throw new Error('bad vector');
+    return [float(), float(), float()];
+  };
   if (str() !== 'EditorBinned') throw new Error('not a binned .dze');
   const version = int();
   const map = str();
