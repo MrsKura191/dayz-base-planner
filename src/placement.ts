@@ -1,4 +1,4 @@
-import { DOOR_LIMIT, levelTop, TERRITORY_RADIUS, WALL_H } from './constants';
+import { DOOR_LIMIT, floorTop, GRID, levelTop, TERRITORY_RADIUS, WALL_H } from './constants';
 import { PARTS, type PartDef } from './data';
 import { distPointSeg, polysOverlap, rot, shapeVerts, worldVerts, type V2 } from './shapes';
 import type { Piece } from './store';
@@ -31,7 +31,7 @@ export interface PlaceCtx {
 
 const def = (p: Piece) => PARTS[p.t];
 const isFullWall = (p: Piece) => def(p).kind === 'wall' && (def(p).height ?? WALL_H) >= WALL_H - 0.01;
-const wallWidth = (d: PartDef) => d.width ?? 3;
+const wallWidth = (d: PartDef) => d.width ?? GRID;
 const wallHeight = (d: PartDef) => d.height ?? WALL_H;
 
 export function wallSeg(p: { x: number; z: number; r: number }, width: number): [V2, V2] {
@@ -80,8 +80,8 @@ function snapFloor(d: PartDef, cur: { x: number; z: number }, ctx: PlaceCtx): Pl
     if (isFullWall(p)) {
       const [A, B] = wallSeg(p, wallWidth(pd));
       const len = Math.hypot(B[0] - A[0], B[1] - A[1]);
-      // a 6 m wall offers two 3 m edges
-      const n = Math.max(1, Math.round(len / 3));
+      // a double-width wall (hangar) offers two grid edges
+      const n = Math.max(1, Math.round(len / GRID));
       for (let k = 0; k < n; k++) {
         const s: V2 = [A[0] + ((B[0] - A[0]) * k) / n, A[1] + ((B[1] - A[1]) * k) / n];
         const e: V2 = [A[0] + ((B[0] - A[0]) * (k + 1)) / n, A[1] + ((B[1] - A[1]) * (k + 1)) / n];
@@ -92,7 +92,7 @@ function snapFloor(d: PartDef, cur: { x: number; z: number }, ctx: PlaceCtx): Pl
   }
 
   let best: { x: number; z: number; r: number } | null = null;
-  let bestD = 3.5;
+  let bestD = GRID;
   for (const c of cands) {
     const cv = worldVerts(shape, c.x, c.z, c.r);
     const cx = cv.reduce((s, v) => s + v[0], 0) / cv.length;
@@ -135,7 +135,7 @@ function snapWall(d: PartDef, cur: { x: number; z: number }, ctx: PlaceCtx): Pla
     }
   }
   let best: Seg | null = null;
-  let bestD = 2;
+  let bestD = 2.6;
   for (const s of segs) {
     const dd = distPointSeg(cur.x, cur.z, s.A, s.B);
     if (dd < bestD) {
@@ -173,7 +173,7 @@ function snapBars(cur: { x: number; z: number }, ctx: PlaceCtx): Placement | nul
     }
   }
   if (!best) return null;
-  const T = def(best).look === 'cinder' ? 0.25 : 0.2;
+  const T = 0.24;
   const side = ctx.rotIndex % 2 ? -1 : 1;
   const [nx, nz] = rot(0, 1, best.r);
   const off = (T / 2 + 0.04) * side;
@@ -183,7 +183,7 @@ function snapBars(cur: { x: number; z: number }, ctx: PlaceCtx): Placement | nul
 function snapStairs(d: PartDef, cur: { x: number; z: number }, ctx: PlaceCtx): Placement | null {
   const L = ctx.level;
   let best: Piece | null = null;
-  let bestD = 2.5;
+  let bestD = 3.2;
   for (const p of ctx.pieces) {
     const pd = def(p);
     const ok =
@@ -197,12 +197,12 @@ function snapStairs(d: PartDef, cur: { x: number; z: number }, ctx: PlaceCtx): P
     }
   }
   if (!best) return null;
-  return { x: best.x, y: levelTop(L), z: best.z, r: best.r + (ctx.rotIndex % 4) * (Math.PI / 2), l: L, snapped: true };
+  return { x: best.x, y: floorTop(L), z: best.z, r: best.r + (ctx.rotIndex % 4) * (Math.PI / 2), l: L, snapped: true };
 }
 
 function snapPalisade(d: PartDef, cur: { x: number; z: number }, ctx: PlaceCtx): Placement | null {
   let best: { end: V2; start: boolean; r: number } | null = null;
-  let bestD = 3;
+  let bestD = 4;
   for (const p of ctx.pieces) {
     if (def(p).kind !== 'palisade') continue;
     const [A, B] = wallSeg(p, wallWidth(def(p)));
@@ -257,6 +257,11 @@ export function computePlacement(d: PartDef, cur: Cursor, ctx: PlaceCtx): Placem
     };
   }
   if (!plane) return null;
+  if (ctx.snap && d.kind === 'floor') {
+    // first floor: align to the building grid drawn on the ground
+    const cell = (v: number) => (Math.floor(v / GRID) + 0.5) * GRID;
+    return { x: cell(plane.x), y: levelTop(ctx.level), z: cell(plane.z), r: 0, l: ctx.level, snapped: false };
+  }
   const step = ctx.snap ? 0.5 : 0.05;
   return { x: round(plane.x, step), y: levelTop(ctx.level), z: round(plane.z, step), r: ctx.freeYaw, l: ctx.level, snapped: false };
 }
@@ -264,11 +269,11 @@ export function computePlacement(d: PartDef, cur: Cursor, ctx: PlaceCtx): Placem
 // -------------------------------------------------------------- validation
 export function extentOf(d: PartDef): number {
   switch (d.kind) {
-    case 'floor': return 1.75;
+    case 'floor': return GRID * 0.6;
     case 'wall':
     case 'palisade': return wallWidth(d) / 2;
     case 'stairs':
-    case 'spiral': return 2.1;
+    case 'spiral': return 2.2;
     case 'bars': return 0.7;
     default: {
       const [w, , dd] = d.size ?? [1, 1, 1];

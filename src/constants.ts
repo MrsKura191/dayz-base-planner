@@ -1,13 +1,17 @@
-// World dimensions. The wiki publishes no part sizes, so these are planner
-// assumptions: a 3 m building grid and 3 m per storey.
-export const GRID = 3;
-export const SLAB = 0.2;
-export const LEVEL_H = 3;
-export const WALL_H = LEVEL_H - SLAB;
+// World dimensions measured from the Aftermath BaseParts models
+// (memory-point extents of Wood_Floor, Wood_Full_Wall, Wooden_Stairs).
+export const GRID = 4.46;
+/** floor slab thickness; slabs are centred on the storey plane */
+export const SLAB = 0.24;
+/** wall height = distance between storeys */
+export const LEVEL_H = 2.92;
+export const WALL_H = LEVEL_H;
 export const MAX_LEVEL = 7;
 
-/** Height of the walkable top surface of a floor on the given level. */
-export const levelTop = (level: number) => SLAB + level * LEVEL_H;
+/** Height of the storey plane: floor slab centre and wall base. */
+export const levelTop = (level: number) => SLAB / 2 + level * LEVEL_H;
+/** Walkable top surface of a floor on the given storey. */
+export const floorTop = (level: number) => levelTop(level) + SLAB / 2;
 
 // Rules from the Aftermath wiki (as of 14 Nov 2026)
 export const TERRITORY_RADIUS = 25;

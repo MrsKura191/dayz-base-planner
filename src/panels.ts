@@ -4,6 +4,7 @@ import {
 import { ABANDON_DAYS, DOOR_LIMIT, FUEL_PER_BOTTLE, MAX_LEVEL, TERRITORY_RADIUS } from './constants';
 import { BREACHING_CHARGE_COST, CHAINSAW_TEAM_MIN, MATERIALS, PARTS, TOOLS, UPKEEP_CATS, type MatId } from './data';
 import type { Settings } from './persist';
+import type { Metric, RaidResult, RaidTarget } from './raidpath';
 import type { Piece } from './store';
 
 export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -25,6 +26,18 @@ export function costLine(id: string) {
     .join(' · ');
 }
 
+/** Stairs whose exit is covered by a solid floor on the storey above. */
+export function blockedStairs(pieces: Piece[]) {
+  let n = 0;
+  for (const s of pieces) {
+    const d = PARTS[s.t];
+    if (d.kind !== 'stairs' && d.kind !== 'spiral') continue;
+    const above = pieces.find((f) => f.l === s.l + 1 && PARTS[f.t].kind === 'floor' && Math.hypot(f.x - s.x, f.z - s.z) < 0.5);
+    if (above && (PARTS[above.t].hole ?? 'none') === 'none') n++;
+  }
+  return n;
+}
+
 export function renderMeters(pieces: Piece[], partLimit: number) {
   const doors = pieces.filter((p) => PARTS[p.t].countsAsDoor).length;
   const pole = pieces.some((p) => PARTS[p.t].kind === 'plotpole');
@@ -35,6 +48,7 @@ export function renderMeters(pieces: Piece[], partLimit: number) {
     <div class="meter"><div class="row"><span>Türen</span><b>${doors} <span style="color:var(--dim)">/ ${DOOR_LIMIT}</span></b></div>
       <div class="bar ${doors >= DOOR_LIMIT ? 'full' : ''}"><i style="width:${pct(doors, DOOR_LIMIT)}%"></i></div></div>
     ${doors >= DOOR_LIMIT ? '<div class="warn">Türlimit erreicht. Entferne eine Tür, um eine weitere zu platzieren.</div>' : ''}
+    ${blockedStairs(pieces) ? `<div class="info box">⚠ ${blockedStairs(pieces)} Treppe${blockedStairs(pieces) > 1 ? 'n führen' : ' führt'} gegen eine geschlossene Decke. Setze darüber einen <b>Porthole</b>- oder <b>Floor-Door</b>-Boden.</div>` : ''}
     ${!pole && pieces.length ? `<div class="info box">Noch keine <b>Plot Pole</b>. Ohne sie kannst du im Spiel nicht bauen; erst mit ihr prüft der Planer den ${TERRITORY_RADIUS}-m-Radius.</div>` : ''}`;
 }
 
@@ -117,14 +131,49 @@ export function renderUpkeep(pieces: Piece[], s: Settings) {
     <div class="info">Bezahlt wird immer die ganze Rechnung, in bar. Nach ${ABANDON_DAYS} Tagen ohne Zahlung wird die Basis aufgegeben: Türen werden zerstört, beim nächsten Restart wird sie gelöscht. Lager kostet mehr als Wände, ein Raid-Alarm am meisten.</div>`;
 }
 
-export function renderRaid(pieces: Piece[]) {
+export interface RouteState {
+  target: RaidTarget | null;
+  metric: Metric;
+  result: RaidResult | null;
+  picking: boolean;
+}
+
+function renderRoute(r: RouteState) {
+  const head = `<div class="h">Weg zum Loot-Raum</div>
+    <div class="route-bar">
+      <button class="btn ${r.picking ? 'primary' : ''}" data-act="raid-pick">${r.picking ? 'Klicke auf den Raum …' : r.target ? 'Ziel neu setzen' : 'Ziel setzen'}</button>
+      <select data-opt="raidMetric" title="Wonach optimiert wird">
+        <option value="charges" ${r.metric === 'charges' ? 'selected' : ''}>wenigste Ladungen</option>
+        <option value="fuel" ${r.metric === 'fuel' ? 'selected' : ''}>wenigster Sprit</option>
+      </select>
+      ${r.target ? '<button class="tb" data-act="raid-clear" title="Ziel entfernen">✕</button>' : ''}
+    </div>`;
+  if (!r.target) return head + '<div class="info">Markiere den Raum mit deinem Loot. Der Planer sucht den günstigsten Weg von außen dorthin und zeigt ihn rot in der Ansicht.</div>';
+  const res = r.result;
+  if (!res || !res.reachable)
+    return head + `<div class="info box" style="border-color:rgba(111,207,151,.35);background:rgba(111,207,151,.07);color:#bfe6cf">
+      <b>Nicht erreichbar.</b> Ohne eine Wand zu zerstören kommt niemand hinein – und Wände, Böden und Treppen sind auf Aftermath nicht raidbar.</div>`;
+  const doors = res.steps.filter((s) => s.kind === 'door' || s.kind === 'palisade');
+  const weak = res.steps.filter((s) => s.kind === 'window' || s.kind === 'low');
+  return head + `
+    <div class="stats">
+      <div class="stat"><b>${fmt(res.charges)}</b><span>Ladungen auf dem Weg</span></div>
+      <div class="stat"><b>${fmt(res.fuel)}</b><span>Sprit (${(Math.round((res.fuel / FUEL_PER_BOTTLE) * 10) / 10).toLocaleString('de-DE')} Flaschen)</span></div>
+    </div>
+    ${weak.length ? `<div class="warn" style="margin:0 0 8px">⚠ Schwachstelle: ${weak.map((w) => `${esc(w.name)} (${levelName(w.level)}, ${w.kind === 'window' ? 'Fenster ohne Gitter' : 'überkletterbar'})`).join(', ')}</div>` : ''}
+    ${doors.length ? `<div class="list">${doors.map((d, i) => `<div class="item"><span class="sub">${i + 1}.</span><span class="name">${esc(d.name)}</span><span class="sub">${levelName(d.level)}</span><span class="qty">${d.charges}× · ${fmt(d.fuel)}</span></div>`).join('')}</div>` : '<div class="info">Kein einziges Hindernis auf dem Weg – der Raum ist offen zugänglich.</div>'}
+    <div class="info">Annahmen: Fenster ohne Gitter sind begehbar, Wände unter 1,6 m überkletterbar, Glas ist nicht zerstörbar, Treppen führen nur durch Portholes, Bodenluken oder offene Decken.</div>`;
+}
+
+export function renderRaid(pieces: Piece[], route: RouteState) {
   const rows = raidRows(pieces);
   if (!rows.length)
-    return '<div class="info">Noch nichts Raidbares. Auf Aftermath lassen sich nur <b>Türen</b> und <b>Palisaden</b> zerstören – normale Wände, Fenster, Böden und Treppen nicht.</div>';
+    return renderRoute(route) + '<div class="info">Noch nichts Raidbares. Auf Aftermath lassen sich nur <b>Türen</b> und <b>Palisaden</b> zerstören – normale Wände, Fenster, Böden und Treppen nicht.</div>';
   const t = raidTotals(rows);
   const weakest = rows[0];
   const anyAssumed = rows.some((r) => r.assumed);
-  return `
+  return renderRoute(route) + `
+    <div class="h">Alle raidbaren Teile</div>
     <div class="stats">
       <div class="stat"><b>${fmt(t.charges)}</b><span>Breaching Charges für alles</span></div>
       <div class="stat"><b>${(Math.round(t.bottles * 10) / 10).toLocaleString('de-DE')}</b><span>Sprit-Flaschen (${fmt(t.fuel)})</span></div>

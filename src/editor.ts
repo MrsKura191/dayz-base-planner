@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { levelTop, MAX_LEVEL, TERRITORY_RADIUS } from './constants';
+import { floorTop, GRID, levelTop, MAX_LEVEL, TERRITORY_RADIUS } from './constants';
 import { PARTS } from './data';
 import { createGhost, createPartObject, findDoorPivots, setGhostValid, setHighlight, stepDoor } from './meshes';
 import { computePlacement, validate, type Cursor, type Placement, type Verdict } from './placement';
@@ -11,6 +11,10 @@ export interface EditorEvents {
   onPreview?: (info: { part: string; verdict: Verdict | null; snapped: boolean } | null) => void;
   onSelect?: (piece: Piece | null) => void;
   onHover?: (piece: Piece | null) => void;
+  onMoveChange?: (moving: boolean) => void;
+  onMoveRejected?: (reason: string) => void;
+  onRaidTarget?: (t: { x: number; z: number; l: number }) => void;
+  onRaidPick?: (on: boolean) => void;
 }
 
 export class Editor {
@@ -34,6 +38,11 @@ export class Editor {
   private clock = new THREE.Clock();
 
   activePart: string | null = null;
+  /** piece being dragged to a new spot */
+  moving: number | null = null;
+  raidPick = false;
+  private raidGroup = new THREE.Group();
+  private grab: { id: number; x: number; y: number } | null = null;
   private ghost: THREE.Group | null = null;
   placement: Placement | null = null;
   verdict: Verdict | null = null;
@@ -88,10 +97,10 @@ export class Editor {
     this.ground.userData.ground = true;
     this.scene.add(this.ground);
 
-    this.grid = new THREE.GridHelper(240, 80, 0x2b3a3f, 0x1d272b);
+    this.grid = new THREE.GridHelper(GRID * 54, 54, 0x2b3a3f, 0x1d272b);
     this.grid.position.y = 0.01;
     this.scene.add(this.grid);
-    this.levelGrid = new THREE.GridHelper(60, 20, 0xb98a3e, 0x3a3226);
+    this.levelGrid = new THREE.GridHelper(GRID * 14, 14, 0xb98a3e, 0x3a3226);
     (this.levelGrid.material as THREE.Material).transparent = true;
     (this.levelGrid.material as THREE.Material).opacity = 0.35;
     this.levelGrid.visible = false;
@@ -100,6 +109,7 @@ export class Editor {
     this.ring = this.makeRing();
     this.scene.add(this.ring);
     this.scene.add(this.world);
+    this.scene.add(this.raidGroup);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
@@ -112,9 +122,24 @@ export class Editor {
 
     const el = this.renderer.domElement;
     el.addEventListener('pointermove', (e) => this.onMove(e));
-    el.addEventListener('pointerdown', (e) => {
-      this.down = { x: e.clientX, y: e.clientY, button: e.button };
-    });
+    // capture phase: runs before OrbitControls, so grabbing a part does not orbit
+    el.addEventListener(
+      'pointerdown',
+      (e) => {
+        this.down = { x: e.clientX, y: e.clientY, button: e.button };
+        this.grab = null;
+        if (e.button === 0 && !this.activePart && !this.frameHook && !this.raidPick) {
+          this.ndc(e);
+          const id = this.pick();
+          if (id != null) {
+            this.grab = { id, x: e.clientX, y: e.clientY };
+            e.stopImmediatePropagation();
+            el.setPointerCapture(e.pointerId);
+          }
+        }
+      },
+      { capture: true },
+    );
     el.addEventListener('pointerup', (e) => this.onUp(e));
     el.addEventListener('pointerleave', () => {
       this.mouseInside = false;
@@ -182,12 +207,21 @@ export class Editor {
       }
     }
     for (const p of pieces.values()) {
-      if (this.objects.has(p.id)) continue;
+      const have = this.objects.get(p.id);
+      if (have && have.userData.t === p.t) {
+        have.position.set(p.x, p.y, p.z);
+        have.rotation.y = p.r;
+        continue;
+      }
+      if (have) this.world.remove(have);
       const obj = createPartObject(p.t);
+      obj.userData.t = p.t;
       obj.position.set(p.x, p.y, p.z);
       obj.rotation.y = p.r;
       obj.userData.pieceId = p.id;
-      obj.traverse((o) => (o.userData.pieceId = p.id));
+      obj.traverse((o) => {
+        if (o !== obj) o.userData.pieceId = p.id;
+      });
       this.objects.set(p.id, obj);
       this.world.add(obj);
     }
@@ -199,10 +233,10 @@ export class Editor {
   applyVisibility() {
     for (const [id, obj] of this.objects) {
       const p = this.store.pieces.get(id)!;
-      obj.visible = this.showAll || p.l <= this.level;
+      obj.visible = (this.showAll || p.l <= this.level) && id !== this.moving;
     }
     this.levelGrid.visible = this.level > 0;
-    this.levelGrid.position.y = levelTop(this.level) + 0.01;
+    this.levelGrid.position.y = floorTop(this.level) + 0.01;
   }
 
   private updateRing() {
@@ -229,6 +263,7 @@ export class Editor {
   }
 
   setActivePart(id: string | null) {
+    if (this.moving != null) this.endMove(false);
     if (this.ghost) {
       this.scene.remove(this.ghost);
       this.ghost = null;
@@ -245,6 +280,7 @@ export class Editor {
     this.updateMouseButtons();
     this.refreshPreview();
     this.updateRing();
+    if (!id) this.ev.onPreview?.(null);
   }
 
   rotate(dir: 1 | -1, big = false) {
@@ -351,14 +387,29 @@ export class Editor {
     if (this.frameHook) return;
     this.ndc(e);
     this.mouseInside = true;
-    if (this.activePart) this.refreshPreview();
+    if (this.grab && this.moving == null && Math.hypot(e.clientX - this.grab.x, e.clientY - this.grab.y) > 5) this.startMove(this.grab.id);
+    if (this.activePart || this.moving != null) this.refreshPreview();
     else if (!this.down) this.setHover(this.pick());
   }
 
   private onUp(e: PointerEvent) {
     const d = this.down;
     this.down = null;
+    const grab = this.grab;
+    this.grab = null;
+    if (this.moving != null) {
+      this.endMove(true);
+      return;
+    }
     if (this.frameHook || !d || d.button !== e.button) return;
+    if (this.raidPick && e.button === 0 && Math.hypot(e.clientX - d.x, e.clientY - d.y) <= 5) {
+      this.pickRaidTarget();
+      return;
+    }
+    if (grab && e.button === 0) {
+      this.select(grab.id);
+      return;
+    }
     if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
     if (e.button === 0) {
       if (this.activePart) this.place();
@@ -403,7 +454,7 @@ export class Editor {
 
   private cursor(): Cursor {
     this.raycaster.setFromCamera(this.mouse, this.camera);
-    const def = PARTS[this.activePart!];
+    const def = PARTS[this.previewPart()!];
     const planeY = def.kind === 'palisade' || def.kind === 'plotpole' ? 0 : levelTop(this.level);
     const pt = new THREE.Vector3();
     const hitPlane = this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -planeY), pt);
@@ -420,31 +471,138 @@ export class Editor {
     return { plane: hitPlane ? { x: pt.x, z: pt.z } : null, hit };
   }
 
+  private previewPart() {
+    if (this.moving != null) return this.store.pieces.get(this.moving)?.t ?? null;
+    return this.activePart;
+  }
+
+  private otherPieces() {
+    const all = this.store.all();
+    return this.moving == null ? all : all.filter((p) => p.id !== this.moving);
+  }
+
   refreshPreview() {
-    if (!this.activePart || !this.ghost) return;
+    const part = this.previewPart();
+    if (!part || !this.ghost) return;
     if (!this.mouseInside) {
       this.ghost.visible = false;
       return;
     }
-    const def = PARTS[this.activePart];
+    const def = PARTS[part];
+    const others = this.otherPieces();
     const pl = computePlacement(def, this.cursor(), {
-      pieces: this.store.all(), level: this.level, rotIndex: this.rotIndex, freeYaw: this.freeYaw, snap: this.snap,
+      pieces: others, level: this.level, rotIndex: this.rotIndex, freeYaw: this.freeYaw, snap: this.snap,
     });
     this.placement = pl;
     if (!pl) {
       this.ghost.visible = false;
       this.verdict = null;
-      this.ev.onPreview?.({ part: this.activePart, verdict: null, snapped: false });
+      this.ev.onPreview?.({ part, verdict: null, snapped: false });
       this.updateRing();
       return;
     }
     this.ghost.visible = true;
     this.ghost.position.set(pl.x, pl.y, pl.z);
     this.ghost.rotation.y = pl.r;
-    this.verdict = validate(def, pl, this.store.all(), this.partLimit);
+    this.verdict = validate(def, pl, others, this.partLimit + (this.moving != null ? 1 : 0));
     setGhostValid(this.ghost, this.verdict.ok);
-    this.ev.onPreview?.({ part: this.activePart, verdict: this.verdict, snapped: pl.snapped });
+    this.ev.onPreview?.({ part, verdict: this.verdict, snapped: pl.snapped });
     this.updateRing();
+  }
+
+  // ---------------------------------------------------------- raid path
+  setRaidPick(on: boolean) {
+    if (on) this.setActivePart(null);
+    this.raidPick = on;
+    this.renderer.domElement.style.cursor = on ? 'crosshair' : '';
+    this.ev.onRaidPick?.(on);
+  }
+
+  private pickRaidTarget() {
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+    const h = this.intersectWorld()[0] ?? this.raycaster.intersectObject(this.ground)[0];
+    if (!h) return;
+    const id = h.object.userData.pieceId as number | undefined;
+    const p = id != null ? this.store.pieces.get(id) : undefined;
+    let l = p ? p.l : 0;
+    // clicking the top of a wall or a floor seen from above: use the storey you stand on
+    if (p && PARTS[p.t].kind === 'floor' && h.point.y < p.y - 0.05) l = Math.max(0, p.l - 1);
+    this.setRaidPick(false);
+    this.ev.onRaidTarget?.({ x: h.point.x, z: h.point.z, l });
+  }
+
+  showRaidPath(path: { x: number; y: number; z: number }[], target: { x: number; z: number; l: number } | null, marks: number[]) {
+    this.clearRaidPath();
+    const mat = new THREE.MeshBasicMaterial({ color: 0xff5a4a, transparent: true, opacity: 0.9, depthTest: false });
+    for (let i = 1; i < path.length; i++) {
+      const a = new THREE.Vector3(path[i - 1].x, path[i - 1].y, path[i - 1].z);
+      const b = new THREE.Vector3(path[i].x, path[i].y, path[i].z);
+      const len = a.distanceTo(b);
+      if (len < 1e-3) continue;
+      const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, len, 6), mat);
+      seg.position.copy(a).add(b).multiplyScalar(0.5);
+      seg.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+      seg.renderOrder = 999;
+      this.raidGroup.add(seg);
+    }
+    const markMat = new THREE.MeshBasicMaterial({ color: 0xff5a4a, transparent: true, opacity: 0.35, depthTest: false });
+    for (const id of marks) {
+      const p = this.store.pieces.get(id);
+      if (!p) continue;
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.55, 16, 12), markMat);
+      m.position.set(p.x, p.y + 1.2, p.z);
+      m.renderOrder = 998;
+      this.raidGroup.add(m);
+    }
+    if (target) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.07, 8, 32), new THREE.MeshBasicMaterial({ color: 0xffd166, depthTest: false }));
+      ring.rotation.x = Math.PI / 2;
+      ring.position.set(target.x, floorTop(target.l) + 0.05, target.z);
+      ring.renderOrder = 999;
+      this.raidGroup.add(ring);
+    }
+  }
+
+  clearRaidPath() {
+    for (const c of [...this.raidGroup.children]) {
+      this.raidGroup.remove(c);
+      (c as THREE.Mesh).geometry?.dispose();
+    }
+  }
+
+  private startMove(id: number) {
+    const p = this.store.pieces.get(id);
+    if (!p) return;
+    this.select(null);
+    this.setHover(null);
+    this.moving = id;
+    this.rotIndex = 0;
+    this.freeYaw = p.r;
+    if (this.level !== p.l && PARTS[p.t].kind !== 'palisade' && PARTS[p.t].kind !== 'plotpole') this.setLevel(p.l);
+    this.ghost = createGhost(p.t);
+    this.scene.add(this.ghost);
+    this.applyVisibility();
+    this.ev.onMoveChange?.(true);
+  }
+
+  /** Finish a drag: commit when the spot is valid, otherwise snap back. */
+  endMove(commit: boolean) {
+    const id = this.moving;
+    if (id == null) return;
+    const pl = this.placement;
+    const ok = commit && pl && this.verdict?.ok;
+    this.moving = null;
+    if (this.ghost) {
+      this.scene.remove(this.ghost);
+      this.ghost = null;
+    }
+    this.placement = null;
+    this.applyVisibility();
+    if (ok && pl) this.store.update(id, { x: pl.x, y: pl.y, z: pl.z, r: pl.r, l: pl.l });
+    else if (commit && this.verdict && !this.verdict.ok) this.ev.onMoveRejected?.(this.verdict.reason ?? '');
+    this.select(id);
+    this.ev.onMoveChange?.(false);
+    this.ev.onPreview?.(null);
   }
 
   private place() {

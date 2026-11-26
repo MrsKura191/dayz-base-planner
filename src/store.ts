@@ -60,6 +60,15 @@ export class Store {
     return piece;
   }
 
+  /** Move/rotate a placed piece (one undo step). */
+  update(id: number, patch: Partial<Omit<Piece, 'id' | 't'>>) {
+    const p = this.pieces.get(id);
+    if (!p) return;
+    this.checkpoint();
+    this.pieces.set(id, { ...p, ...patch, id });
+    this.emit();
+  }
+
   remove(ids: number[]) {
     if (!ids.length) return;
     this.checkpoint();

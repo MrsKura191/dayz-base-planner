@@ -3,18 +3,21 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { GRID, LEVEL_H, SLAB, WALL_H } from './constants';
 import { PARTS, type PartDef, type Opening } from './data';
 import { shapeVerts } from './shapes';
-import { barkTex, burlapTex, cinderTex, metalTex, netTex, woodTex } from './textures';
+import {
+  barkTex, burlapTex, concreteTex, darkPlanksTex, floorBoardsTex, greyBoardsTex, metalPanelTex, netTex, treadPlateTex,
+} from './textures';
 
 // ------------------------------------------------------------------ materials
 const std = (o: THREE.MeshStandardMaterialParameters) => new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0, ...o });
 
 export const MAT = {
-  wood: std({ map: woodTex() }),
-  woodFrame: std({ map: woodTex([70, 60, 50], 9) }),
-  woodFloor: std({ map: woodTex([104, 96, 86], 13) }),
-  cinder: std({ map: cinderTex(), roughness: 0.95 }),
-  metal: std({ map: metalTex(), metalness: 0.35, roughness: 0.7 }),
-  metalDark: std({ color: 0x3a3f44, metalness: 0.5, roughness: 0.55 }),
+  wood: std({ map: greyBoardsTex() }),
+  woodFrame: std({ map: darkPlanksTex() }),
+  woodFloor: std({ map: floorBoardsTex() }),
+  cinder: std({ map: concreteTex(), roughness: 0.95 }),
+  metal: std({ map: metalPanelTex(), metalness: 0.4, roughness: 0.65 }),
+  metalFloor: std({ map: treadPlateTex(), metalness: 0.5, roughness: 0.55 }),
+  metalDark: std({ color: 0x3a3d3f, metalness: 0.55, roughness: 0.55 }),
   log: std({ map: barkTex() }),
   burlap: std({ map: burlapTex() }),
   net: std({ map: netTex(), transparent: true, alphaTest: 0.35, side: THREE.DoubleSide }),
@@ -37,10 +40,10 @@ function colorMat(color: string) {
 
 function lookMats(def: PartDef) {
   switch (def.look) {
-    case 'cinder': return { main: MAT.cinder, frame: MAT.cinder, leaf: MAT.metal, floor: MAT.cinder };
-    case 'metal': return { main: MAT.metal, frame: MAT.metalDark, leaf: MAT.metal, floor: MAT.metal };
+    case 'cinder': return { main: MAT.cinder, frame: MAT.metalDark, leaf: MAT.metal, floor: MAT.cinder };
+    case 'metal': return { main: MAT.metal, frame: MAT.metalDark, leaf: MAT.metalFloor, floor: MAT.metalFloor };
     case 'log': return { main: MAT.log, frame: MAT.log, leaf: MAT.log, floor: MAT.log };
-    default: return { main: MAT.wood, frame: MAT.woodFrame, leaf: MAT.wood, floor: MAT.woodFloor };
+    default: return { main: MAT.wood, frame: MAT.woodFrame, leaf: MAT.woodFrame, floor: MAT.woodFloor };
   }
 }
 
@@ -69,6 +72,7 @@ function meterCylinder(r: number, h: number, seg = 10) {
 interface BoxOpts {
   ry?: number;
   rx?: number;
+  rz?: number;
   noCollide?: boolean;
 }
 
@@ -77,6 +81,7 @@ function mesh(parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Mate
   m.position.set(x, y, z);
   if (o.ry) m.rotation.y = o.ry;
   if (o.rx) m.rotation.x = o.rx;
+  if (o.rz) m.rotation.z = o.rz;
   if (o.noCollide) m.userData.noCollide = true;
   m.castShadow = mat !== MAT.glass && mat !== MAT.collider;
   m.receiveShadow = true;
@@ -97,6 +102,7 @@ function pivot(parent: THREE.Object3D, mode: DoorMode, x: number, y: number, z: 
 }
 
 // -------------------------------------------------------------------- walls
+// Opening sizes measured from the Aftermath models (memory points).
 interface OpeningSpec {
   x: number;
   y: number;
@@ -106,23 +112,26 @@ interface OpeningSpec {
   leaf?: 'hinge' | 'double' | 'roller';
 }
 
-function openingSpec(op: Opening, W: number, H: number): OpeningSpec | null {
+const WINDOW: OpeningSpec = { x: 0, y: 0.97, w: 1.96, h: 1.35 };
+
+function openingSpec(op: Opening, def: PartDef, W: number, H: number): OpeningSpec | null {
+  const cinder = def.look === 'cinder';
   switch (op) {
-    case 'window': return { x: 0, y: 1.0, w: 1.3, h: 0.9 };
-    case 'glasswindow': return { x: 0, y: 1.0, w: 1.3, h: 0.9, glass: true };
-    case 'glass': return { x: 0, y: 0.35, w: W - 0.5, h: H - 0.7, glass: true };
-    case 'door': return { x: 0, y: 0, w: 1.2, h: 2.2, leaf: 'hinge' };
-    case 'smalldoor': return { x: 0, y: 0, w: 0.9, h: 1.9, leaf: 'hinge' };
-    case 'garage': return { x: 0, y: 0, w: Math.min(W - 0.5, 2.5), h: 2.4, leaf: 'double' };
-    case 'shutter': return { x: 0, y: 0, w: 2.5, h: 2.4, leaf: 'roller' };
-    case 'hangar': return { x: 0, y: 0, w: W - 0.6, h: 2.6, leaf: 'double' };
-    case 'hangarshutter': return { x: 0, y: 0, w: W - 0.6, h: 2.6, leaf: 'roller' };
+    case 'window': return { ...WINDOW };
+    case 'glasswindow': return { ...WINDOW, glass: true };
+    case 'glass': return { x: 0, y: 0.15, w: W - 0.3, h: H - 0.32, glass: true };
+    case 'door': return { x: 0, y: 0, w: 1.28, h: 2.25, leaf: 'hinge' };
+    case 'smalldoor': return { x: 0, y: 0, w: 1.28, h: 2.25, leaf: 'hinge' };
+    case 'garage': return cinder ? { x: 0, y: 0, w: 3.1, h: 2.56, leaf: 'double' } : { x: 0, y: 0, w: W - 0.3, h: 2.75, leaf: 'double' };
+    case 'shutter': return cinder ? { x: 0, y: 0, w: 3.5, h: 2.3, leaf: 'roller' } : { x: 0, y: 0, w: W - 0.3, h: 2.75, leaf: 'roller' };
+    case 'hangar': return { x: 0, y: 0, w: 7.62, h: 5.5, leaf: 'double' };
+    case 'hangarshutter': return { x: 0, y: 0, w: 7.62, h: 5.5, leaf: 'roller' };
     default: return null;
   }
 }
 
 export function windowSpec() {
-  return openingSpec('window', GRID, WALL_H)!;
+  return WINDOW;
 }
 
 function buildLeaves(g: THREE.Object3D, op: OpeningSpec, T: number, leafMat: THREE.Material, frameMat: THREE.Material) {
@@ -130,22 +139,23 @@ function buildLeaves(g: THREE.Object3D, op: OpeningSpec, T: number, leafMat: THR
   if (op.leaf === 'hinge') {
     const p = pivot(g, 'hinge', op.x - op.w / 2, op.y, 0);
     box(p, leafMat, op.w - 0.04, op.h - 0.03, lt, op.w / 2, op.h / 2, 0);
-    box(p, frameMat, op.w - 0.1, 0.12, lt + 0.02, op.w / 2, op.h * 0.25, 0);
-    box(p, frameMat, op.w - 0.1, 0.12, lt + 0.02, op.w / 2, op.h * 0.75, 0);
-    box(p, MAT.metalDark, 0.06, 0.06, lt + 0.08, op.w - 0.15, op.h * 0.5, 0);
+    for (const t of [0.12, 0.5, 0.88]) box(p, frameMat, op.w - 0.1, 0.1, lt + 0.03, op.w / 2, op.h * t, 0);
+    const bw = op.w - 0.2, bh = op.h * 0.76;
+    box(p, frameMat, 0.1, Math.hypot(bw, bh), lt + 0.02, op.w / 2, op.h / 2, 0, { rz: -Math.atan2(bw, bh) });
+    box(p, MAT.metalDark, 0.06, 0.06, lt + 0.1, op.w - 0.15, op.h * 0.48, 0);
   } else if (op.leaf === 'double') {
     const hw = op.w / 2;
-    const l = pivot(g, 'hinge', op.x - hw, op.y, 0);
-    box(l, leafMat, hw - 0.02, op.h - 0.03, lt, hw / 2, op.h / 2, 0);
-    box(l, frameMat, hw - 0.1, 0.12, lt + 0.02, hw / 2, op.h * 0.5, 0);
-    const r = pivot(g, 'hingeR', op.x + hw, op.y, 0);
-    box(r, leafMat, hw - 0.02, op.h - 0.03, lt, -hw / 2, op.h / 2, 0);
-    box(r, frameMat, hw - 0.1, 0.12, lt + 0.02, -hw / 2, op.h * 0.5, 0);
+    for (const side of [-1, 1] as const) {
+      const p = pivot(g, side < 0 ? 'hinge' : 'hingeR', op.x + side * hw, op.y, 0);
+      const cx = -side * hw / 2;
+      box(p, leafMat, hw - 0.02, op.h - 0.03, lt, cx, op.h / 2, 0);
+      for (const t of [0.12, 0.5, 0.88]) box(p, frameMat, hw - 0.1, 0.12, lt + 0.03, cx, op.h * t, 0);
+    }
   } else if (op.leaf === 'roller') {
     const p = pivot(g, 'roller', op.x, op.y, 0, op.h);
     box(p, MAT.metal, op.w - 0.04, op.h - 0.02, lt, 0, op.h / 2, 0);
-    for (let y = 0.3; y < op.h; y += 0.3) box(p, MAT.metalDark, op.w - 0.06, 0.03, lt + 0.02, 0, y, 0);
-    box(g, MAT.metalDark, op.w + 0.1, 0.25, T + 0.1, op.x, op.y + op.h + 0.12, 0, { noCollide: true });
+    for (let y = 0.25; y < op.h; y += 0.25) box(p, MAT.metalDark, op.w - 0.06, 0.03, lt + 0.02, 0, y, 0);
+    box(g, MAT.metalDark, op.w + 0.1, 0.28, T + 0.12, op.x, op.y + op.h + 0.14, 0, { noCollide: true });
   }
 }
 
@@ -153,69 +163,73 @@ function buildWall(def: PartDef) {
   const g = new THREE.Group();
   const W = def.width ?? GRID;
   const H = def.height ?? WALL_H;
-  const T = def.look === 'cinder' ? 0.25 : 0.2;
+  const T = 0.24;
   const m = lookMats(def);
-  const op = openingSpec(def.opening ?? 'none', W, H);
+  const op = openingSpec(def.opening ?? 'none', def, W, H);
+  const wood = def.look === 'wood';
+  const inner = wood ? T - 0.06 : T;
   if (!op) {
-    box(g, m.main, W, H, T, 0, H / 2, 0);
+    box(g, m.main, W, H, inner, 0, H / 2, 0);
   } else {
     const l = -W / 2, r = W / 2, x0 = op.x - op.w / 2, x1 = op.x + op.w / 2, top = op.y + op.h;
-    if (x0 - l > 0.001) box(g, m.main, x0 - l, H, T, (l + x0) / 2, H / 2, 0);
-    if (r - x1 > 0.001) box(g, m.main, r - x1, H, T, (x1 + r) / 2, H / 2, 0);
-    if (H - top > 0.001) box(g, m.main, op.w, H - top, T, op.x, (top + H) / 2, 0);
-    if (op.y > 0.001) box(g, m.main, op.w, op.y, T, op.x, op.y / 2, 0);
+    if (x0 - l > 0.001) box(g, m.main, x0 - l, H, inner, (l + x0) / 2, H / 2, 0);
+    if (r - x1 > 0.001) box(g, m.main, r - x1, H, inner, (x1 + r) / 2, H / 2, 0);
+    if (H - top > 0.001) box(g, m.main, op.w, H - top, inner, op.x, (top + H) / 2, 0);
+    if (op.y > 0.001) box(g, m.main, op.w, op.y, inner, op.x, op.y / 2, 0);
     if (op.glass) {
       box(g, MAT.glass, op.w, op.h, 0.03, op.x, op.y + op.h / 2, 0);
-      if (op.w > 2) box(g, m.frame, 0.08, op.h, T * 0.6, op.x, op.y + op.h / 2, 0);
-    }
-    if (def.look === 'wood') {
-      const jt = T + 0.04;
-      box(g, m.frame, 0.1, op.h, jt, x0 - 0.05, op.y + op.h / 2, 0);
-      box(g, m.frame, 0.1, op.h, jt, x1 + 0.05, op.y + op.h / 2, 0);
-      box(g, m.frame, op.w + 0.2, 0.1, jt, op.x, top + 0.05, 0);
-      if (op.y > 0) box(g, m.frame, op.w + 0.2, 0.1, jt, op.x, op.y - 0.05, 0);
-    }
-    buildLeaves(g, op, T, m.leaf, m.frame);
-  }
-  if (def.look === 'wood') {
-    const ft = T + 0.06;
-    box(g, m.frame, 0.16, H, ft, -W / 2 + 0.08, H / 2, 0);
-    box(g, m.frame, 0.16, H, ft, W / 2 - 0.08, H / 2, 0);
-    box(g, m.frame, W, 0.14, ft, 0, H - 0.07, 0);
-    if (!op || op.y > 0) box(g, m.frame, W, 0.14, ft, 0, 0.07, 0);
-    else {
-      const seg = (W - op.w) / 2;
-      if (seg > 0.2) {
-        box(g, m.frame, seg, 0.14, ft, -W / 2 + seg / 2, 0.07, 0);
-        box(g, m.frame, seg, 0.14, ft, W / 2 - seg / 2, 0.07, 0);
+      if (op.w > 2.5) {
+        box(g, m.frame, 0.1, op.h, T * 0.7, op.x, op.y + op.h / 2, 0);
+        box(g, m.frame, op.w, 0.1, T * 0.7, op.x, op.y + op.h * 0.55, 0);
       }
     }
+    // jambs and lintel around every opening
+    const jt = T + 0.02;
+    box(g, m.frame, 0.12, op.h, jt, x0 - 0.06, op.y + op.h / 2, 0);
+    box(g, m.frame, 0.12, op.h, jt, x1 + 0.06, op.y + op.h / 2, 0);
+    if (H - top > 0.05) box(g, m.frame, op.w + 0.24, 0.12, jt, op.x, top + 0.06, 0);
+    if (op.y > 0) box(g, m.frame, op.w + 0.24, 0.12, jt, op.x, op.y - 0.06, 0);
+    buildLeaves(g, op, T, m.leaf, m.frame);
+  }
+  if (wood) {
+    // frame like the in-game wood walls: posts, top/bottom beams and two rails each side
+    const ft = T;
+    box(g, m.frame, 0.15, H, ft, -W / 2 + 0.075, H / 2, 0);
+    box(g, m.frame, 0.15, H, ft, W / 2 - 0.075, H / 2, 0);
+    box(g, m.frame, W, 0.15, ft, 0, H - 0.075, 0);
+    const segs: [number, number][] = [];
+    if (!op || op.y > 0) segs.push([-W / 2, W / 2]);
+    else {
+      const x0 = op.x - op.w / 2 - 0.12, x1 = op.x + op.w / 2 + 0.12;
+      if (x0 > -W / 2 + 0.2) segs.push([-W / 2, x0]);
+      if (x1 < W / 2 - 0.2) segs.push([x1, W / 2]);
+    }
+    for (const [a, b] of segs) box(g, m.frame, b - a, 0.15, ft, (a + b) / 2, 0.075, 0);
   } else if (def.look === 'cinder') {
-    box(g, MAT.metalDark, W, 0.06, T + 0.04, 0, H - 0.03, 0, { noCollide: true });
+    box(g, MAT.metalDark, W, 0.05, T + 0.03, 0, H - 0.025, 0, { noCollide: true });
   }
   return g;
 }
 
 // ------------------------------------------------------------------- floors
+/** Rectangular hole of the porthole / floor-door floors (from the models). */
+export const HATCH = { w: 1.1, d: 2.55 };
+
 function buildFloor(def: PartDef) {
   const g = new THREE.Group();
   const m = lookMats(def);
   const verts = shapeVerts(def.shape ?? 'square');
   const shape = new THREE.Shape(verts.map(([x, z]) => new THREE.Vector2(x, -z)));
-  if (def.hole === 'porthole') {
-    const hole = new THREE.Path();
-    hole.absarc(0, 0, 0.55, 0, Math.PI * 2, true);
-    shape.holes.push(hole);
-  } else if (def.hole === 'hatch') {
-    const h = 0.6;
-    const hole = new THREE.Path([new THREE.Vector2(-h, -h), new THREE.Vector2(-h, h), new THREE.Vector2(h, h), new THREE.Vector2(h, -h)]);
-    shape.holes.push(hole);
+  const hw = HATCH.w / 2, hd = HATCH.d / 2;
+  if (def.hole === 'porthole' || def.hole === 'hatch') {
+    shape.holes.push(new THREE.Path([new THREE.Vector2(-hw, -hd), new THREE.Vector2(-hw, hd), new THREE.Vector2(hw, hd), new THREE.Vector2(hw, -hd)]));
   }
-  const geo = new THREE.ExtrudeGeometry(shape, { depth: SLAB, bevelEnabled: false, curveSegments: 20 });
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: SLAB, bevelEnabled: false });
   geo.rotateX(-Math.PI / 2);
-  geo.translate(0, -SLAB, 0);
+  geo.translate(0, -SLAB / 2, 0);
   mesh(g, geo, m.floor, 0, 0, 0);
-  // edge beams give the framed look and make seams readable
+  const metal = def.look === 'metal';
+  const bw = metal ? 0.28 : 0.15;
   for (let i = 0; i < verts.length; i++) {
     const a = verts[i];
     const b = verts[(i + 1) % verts.length];
@@ -223,107 +237,108 @@ function buildFloor(def: PartDef) {
     const len = Math.hypot(dx, dz);
     const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
     const inv = Math.hypot(mx, mz) || 1;
-    const bw = 0.14;
-    box(g, m.frame, len - 0.02, SLAB + 0.012, bw, mx - (mx / inv) * (bw / 2), -SLAB / 2 + 0.006, mz - (mz / inv) * (bw / 2), {
-      ry: -Math.atan2(dz, dx),
-    });
+    box(g, m.frame, len - 0.02, SLAB + 0.012, bw, mx - (mx / inv) * (bw / 2), 0, mz - (mz / inv) * (bw / 2), { ry: -Math.atan2(dz, dx) });
+  }
+  if (def.hole === 'porthole' || def.hole === 'hatch') {
+    // trim around the hole
+    const t = 0.08;
+    box(g, m.frame, HATCH.w + 2 * t, SLAB + 0.01, t, 0, 0, -hd - t / 2);
+    box(g, m.frame, HATCH.w + 2 * t, SLAB + 0.01, t, 0, 0, hd + t / 2);
+    box(g, m.frame, t, SLAB + 0.01, HATCH.d, -hw - t / 2, 0, 0);
+    box(g, m.frame, t, SLAB + 0.01, HATCH.d, hw + t / 2, 0, 0);
   }
   if (def.hole === 'hatch') {
-    const h = 0.6;
-    const p = pivot(g, 'hatch', 0, 0, -h);
-    box(p, m.leaf, 2 * h - 0.04, 0.07, 2 * h - 0.04, 0, -0.035, h);
-    box(p, MAT.metalDark, 0.3, 0.04, 0.06, 0, 0.02, 2 * h - 0.2);
-  } else if (def.hole === 'porthole') {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.05, 6, 24), MAT.metalDark);
-    ring.rotation.x = Math.PI / 2;
-    ring.position.y = 0.005;
-    ring.userData.noCollide = true;
-    g.add(ring);
+    const p = pivot(g, 'hatch', 0, SLAB / 2, -hd);
+    box(p, m.leaf, HATCH.w - 0.03, 0.07, HATCH.d - 0.03, 0, -0.035, hd);
+    for (const t of [0.2, 0.5, 0.8]) box(p, m.frame, HATCH.w - 0.08, 0.03, 0.1, 0, 0.012, HATCH.d * t);
+    box(p, MAT.metalDark, 0.25, 0.04, 0.06, 0, 0.02, HATCH.d - 0.2);
   }
   return g;
 }
 
 // ------------------------------------------------------------------- stairs
+/** Straight stairs: 1.1 m wide, 2.85 m run (Wooden_Stairs). */
 function buildStairs(def: PartDef) {
   const g = new THREE.Group();
   const m = lookMats(def);
-  const n = 12;
-  const run = GRID;
-  const w = 1.3;
+  const n = 13;
+  const run = 2.85;
+  const w = 1.1;
   for (let i = 0; i < n; i++) {
-    box(g, m.floor, w, 0.06, run / n + 0.03, 0, ((i + 1) * LEVEL_H) / n - 0.03, -run / 2 + ((i + 0.5) * run) / n, { noCollide: true });
+    box(g, m.floor, w, 0.05, run / n + 0.04, 0, ((i + 1) * LEVEL_H) / n - 0.025, -run / 2 + ((i + 0.5) * run) / n, { noCollide: true });
   }
   const hyp = Math.hypot(run, LEVEL_H);
   const ang = -Math.atan2(LEVEL_H, run);
   for (const sx of [-1, 1]) {
-    box(g, m.frame, 0.07, 0.3, hyp, (sx * (w + 0.07)) / 2, LEVEL_H / 2 - 0.1, 0, { rx: ang, noCollide: true });
+    box(g, m.frame, 0.07, 0.28, hyp, (sx * (w + 0.07)) / 2, LEVEL_H / 2 - 0.1, 0, { rx: ang, noCollide: true });
     box(g, m.frame, 0.05, 0.05, hyp, (sx * (w + 0.07)) / 2, LEVEL_H / 2 + 0.85, 0, { rx: ang, noCollide: true });
-    for (const t of [0.15, 0.5, 0.85]) {
-      const z = -run / 2 + t * run;
-      const y = t * LEVEL_H;
-      box(g, m.frame, 0.05, 0.95, 0.05, (sx * (w + 0.07)) / 2, y + 0.45, z, { noCollide: true });
+    for (const t of [0.12, 0.5, 0.88]) {
+      box(g, m.frame, 0.05, 0.95, 0.05, (sx * (w + 0.07)) / 2, t * LEVEL_H + 0.45, -run / 2 + t * run, { noCollide: true });
     }
   }
   box(g, MAT.collider, w, 0.04, hyp, 0, LEVEL_H / 2, 0, { rx: ang });
   return g;
 }
 
+/** Turning stairs: roughly 4 m footprint, one storey per piece. */
 function buildSpiral(def: PartDef) {
   const g = new THREE.Group();
   const m = lookMats(def);
-  mesh(g, meterCylinder(0.13, LEVEL_H, 12), m.frame, 0, LEVEL_H / 2, 0);
-  const n = 12;
+  mesh(g, meterCylinder(0.16, LEVEL_H, 12), m.frame, 0, LEVEL_H / 2, 0);
+  const n = 14;
   for (let i = 0; i < n; i++) {
     const a = (i / n) * Math.PI * 2;
-    const r = 0.72;
-    const s = box(g, m.floor, 1.2, 0.06, 0.5, Math.cos(a) * r, ((i + 1) * LEVEL_H) / n - 0.03, -Math.sin(a) * r, { ry: a });
-    s.castShadow = true;
-    box(g, m.frame, 0.04, 0.9, 0.04, Math.cos(a) * 1.3, ((i + 1) * LEVEL_H) / n + 0.45, -Math.sin(a) * 1.3, { noCollide: true });
+    const r = 0.95;
+    box(g, m.floor, 1.6, 0.06, 0.62, Math.cos(a) * r, ((i + 1) * LEVEL_H) / n - 0.03, -Math.sin(a) * r, { ry: a });
+    box(g, m.frame, 0.05, 0.9, 0.05, Math.cos(a) * 1.75, ((i + 1) * LEVEL_H) / n + 0.45, -Math.sin(a) * 1.75, { noCollide: true });
   }
   return g;
 }
 
 // ---------------------------------------------------------------- palisade
+/** Log palisade: 9.37 m wide, about 7 m tall; the door has a 3 m gate. */
 function buildPalisade(def: PartDef) {
   const g = new THREE.Group();
-  const W = def.width ?? 4;
-  const H = def.height ?? 4;
-  const r = 0.16;
+  const W = def.width ?? 9.37;
+  const H = def.height ?? 7;
+  const r = 0.2;
   const gate = def.opening === 'garage';
-  const gw = 2.4;
+  const gw = 3.04;
+  const gh = 6.26;
   const logs = Math.round(W / (2 * r));
-  const geoLog = meterCylinder(r, H, 9);
-  const geoTip = new THREE.ConeGeometry(r, 0.45, 9);
+  const geoLog = meterCylinder(r, 1, 9);
+  const geoTip = new THREE.ConeGeometry(r, 0.5, 9);
   for (let i = 0; i < logs; i++) {
     const x = -W / 2 + r + i * 2 * r;
     if (gate && Math.abs(x) < gw / 2) continue;
-    const hh = H + Math.sin(i * 2.7) * 0.15;
-    mesh(g, geoLog, MAT.log, x, hh / 2, 0);
-    mesh(g, geoTip, MAT.log, x, hh + 0.22, 0, { noCollide: true });
+    const hh = H - 0.5 + Math.sin(i * 2.7) * 0.2;
+    const l = mesh(g, geoLog, MAT.log, x, hh / 2, 0);
+    l.scale.y = hh;
+    mesh(g, geoTip, MAT.log, x, hh + 0.25, 0, { noCollide: true });
   }
   const beam = (y: number, x0: number, x1: number) => {
-    const b = mesh(g, meterCylinder(0.09, x1 - x0, 8), MAT.log, (x0 + x1) / 2, y, -r - 0.06, { noCollide: true });
+    const b = mesh(g, meterCylinder(0.11, x1 - x0, 8), MAT.log, (x0 + x1) / 2, y, -r - 0.08, { noCollide: true });
     b.rotation.z = Math.PI / 2;
   };
   if (gate) {
-    beam(0.8, -W / 2, -gw / 2);
-    beam(0.8, gw / 2, W / 2);
-    beam(3.0, -W / 2, W / 2);
-    box(g, MAT.log, gw + 0.3, 0.35, 0.35, 0, 2.95, 0);
+    for (const y of [1.0, 4.0]) {
+      beam(y, -W / 2, -gw / 2);
+      beam(y, gw / 2, W / 2);
+    }
+    box(g, MAT.log, gw + 0.4, 0.4, 0.42, 0, gh + 0.2, 0);
     const half = gw / 2;
     for (const side of [-1, 1]) {
       const p = pivot(g, side < 0 ? 'hinge' : 'hingeR', side * half, 0, 0);
-      const n = Math.round(half / (2 * 0.12));
+      const n = Math.round(half / (2 * 0.14));
       for (let i = 0; i < n; i++) {
-        const x = -side * (0.12 + i * 0.24);
-        mesh(p, meterCylinder(0.12, 2.7, 8), MAT.log, x, 1.38, 0);
+        const x = -side * (0.14 + i * 0.28);
+        mesh(p, meterCylinder(0.14, gh - 0.1, 8), MAT.log, x, (gh - 0.1) / 2, 0);
       }
-      box(p, MAT.woodFrame, half - 0.05, 0.14, 0.1, -side * (half / 2), 0.6, 0.12);
-      box(p, MAT.woodFrame, half - 0.05, 0.14, 0.1, -side * (half / 2), 2.1, 0.12);
+      for (const y of [0.8, 3.1, 5.4]) box(p, MAT.woodFrame, half - 0.05, 0.16, 0.1, -side * (half / 2), y, 0.15);
     }
   } else {
-    beam(0.8, -W / 2, W / 2);
-    beam(3.0, -W / 2, W / 2);
+    beam(1.0, -W / 2, W / 2);
+    beam(4.0, -W / 2, W / 2);
   }
   return g;
 }
@@ -333,10 +348,8 @@ function buildBars() {
   const g = new THREE.Group();
   const op = windowSpec();
   const rod = meterCylinder(0.018, op.h, 6);
-  for (let x = -op.w / 2 + 0.1; x <= op.w / 2 - 0.09; x += 0.14) mesh(g, rod, MAT.metalDark, x, op.y + op.h / 2, 0);
-  box(g, MAT.metalDark, op.w, 0.04, 0.04, 0, op.y + 0.05, 0);
-  box(g, MAT.metalDark, op.w, 0.04, 0.04, 0, op.y + op.h - 0.05, 0);
-  box(g, MAT.metalDark, op.w, 0.04, 0.04, 0, op.y + op.h / 2, 0);
+  for (let x = -op.w / 2 + 0.1; x <= op.w / 2 - 0.09; x += 0.15) mesh(g, rod, MAT.metalDark, x, op.y + op.h / 2, 0);
+  for (const y of [0.05, op.h / 2, op.h - 0.05]) box(g, MAT.metalDark, op.w, 0.04, 0.04, 0, op.y + y, 0);
   return g;
 }
 

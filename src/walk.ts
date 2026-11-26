@@ -163,8 +163,28 @@ export class WalkMode {
         return true;
       }
     }
+    // ceiling: would the head end up inside a floor slab above?
+    const head = EYE[this.stance] + 0.1;
+    const dest = new THREE.Vector3(from.x + dir.x * (dist + RADIUS * 0.5), from.y + 0.35, from.z + dir.z * (dist + RADIUS * 0.5));
+    this.ray.set(dest, new THREE.Vector3(0, 1, 0));
+    this.ray.far = head - 0.35;
+    const up = this.ray.intersectObjects(this.colliders, false);
     this.ray.far = Infinity;
+    for (const h of up) {
+      if (!h.face) continue;
+      const n = h.face.normal.clone().transformDirection(h.object.matrixWorld);
+      if (n.y < -0.5) return true;
+    }
     return false;
+  }
+
+  /** Stop upward motion when the head hits a ceiling. */
+  private ceiling() {
+    this.ray.set(new THREE.Vector3(this.pos.x, this.pos.y + 0.35, this.pos.z), new THREE.Vector3(0, 1, 0));
+    this.ray.far = EYE[this.stance] + 0.1 - 0.35;
+    const hit = this.ray.intersectObjects(this.colliders, false).some((h) => h.face && h.face.normal.clone().transformDirection(h.object.matrixWorld).y < -0.5);
+    this.ray.far = Infinity;
+    return hit;
   }
 
   private update(dt: number) {
@@ -197,6 +217,7 @@ export class WalkMode {
         if (!this.blocked(this.pos, dir, Math.abs(d))) this.pos[axis] += d;
       }
       this.vel.y -= GRAVITY * dt;
+      if (this.vel.y > 0 && this.ceiling()) this.vel.y = 0;
       this.pos.y += this.vel.y * dt;
       // ground probe from just above the step height
       this.ray.set(new THREE.Vector3(this.pos.x, this.pos.y + STEP_UP + Math.max(0, -this.vel.y * dt), this.pos.z), new THREE.Vector3(0, -1, 0));

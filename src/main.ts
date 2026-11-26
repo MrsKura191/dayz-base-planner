@@ -8,6 +8,7 @@ import {
   currentDesignId, decodeShare, deleteDesign, encodeShare, listDesigns, loadSettings, newId, sanitize, saveDesign, saveSettings,
   strip, type Design, type Settings,
 } from './persist';
+import { analyseRaid, type Metric, type RaidTarget } from './raidpath';
 import { Store } from './store';
 import { renderThumbs } from './thumbs';
 import { WalkMode } from './walk';
@@ -84,10 +85,21 @@ let tab: 'mat' | 'phase' | 'upkeep' | 'raid' = 'mat';
 let catTab: Category = 'wood';
 let search = '';
 const thumbs = new Map<string, string>();
+const route: { target: RaidTarget | null; metric: Metric; picking: boolean } = { target: null, metric: 'charges', picking: false };
 
 const editor = new Editor($('viewport'), store, {
   onPreview: () => renderStatus(),
   onSelect: () => renderSelection(),
+  onMoveChange: () => renderStatus(),
+  onMoveRejected: (reason) => toast(`Nicht verschoben: ${reason}`),
+  onRaidPick: (on) => {
+    route.picking = on;
+    if (tab === 'raid') renderPanel();
+  },
+  onRaidTarget: (t) => {
+    route.target = t;
+    renderPanel();
+  },
 });
 editor.partLimit = settings.partLimit;
 if (import.meta.env.DEV) Object.assign(window, { __ed: editor, __store: store });
@@ -331,15 +343,26 @@ $('levels').onclick = (e) => {
 };
 
 // ----------------------------------------------------------------- panel
+function currentRoute() {
+  if (tab !== 'raid' || !route.target) {
+    editor.clearRaidPath();
+    return null;
+  }
+  const res = analyseRaid(store.all(), route.target, route.metric);
+  editor.showRaidPath(res.reachable ? res.path : [], route.target, res.steps.map((s) => s.pieceId));
+  return res;
+}
+
 function renderPanel() {
   const pieces = store.all();
+  if (tab !== 'raid') editor.clearRaidPath();
   $('meters').innerHTML = renderMeters(pieces, settings.partLimit);
   const body = $('tabBody');
   body.innerHTML =
     tab === 'mat' ? renderMaterials(pieces, settings)
     : tab === 'phase' ? renderPhases(pieces)
     : tab === 'upkeep' ? renderUpkeep(pieces, settings)
-    : renderRaid(pieces);
+    : renderRaid(pieces, { ...route, result: currentRoute() });
   document.querySelectorAll<HTMLElement>('.tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === tab));
 }
 
@@ -355,6 +378,7 @@ $('tabBody').addEventListener('change', (e) => {
   const opt = el.dataset.opt;
   if (opt === 'rawNails' || opt === 'rawSheet') settings[opt] = el.checked;
   if (opt === 'rawPlanks') settings.rawPlanks = (el.value || false) as Settings['rawPlanks'];
+  if (opt === 'raidMetric') route.metric = el.value as Metric;
   if (el.dataset.price) settings.upkeepPrices[el.dataset.price] = Math.max(0, Number(el.value) || 0);
   saveSettings(settings);
   renderPanel();
@@ -362,6 +386,11 @@ $('tabBody').addEventListener('change', (e) => {
 
 $('tabBody').addEventListener('click', async (e) => {
   const b = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
+  if (b?.dataset.act === 'raid-pick') editor.setRaidPick(!editor.raidPick);
+  if (b?.dataset.act === 'raid-clear') {
+    route.target = null;
+    renderPanel();
+  }
   if (b?.dataset.act === 'copy-list') {
     const text = shoppingText(store.all(), settings, design.name);
     try {
@@ -433,17 +462,21 @@ $('cards').addEventListener('click', (e) => {
 // ------------------------------------------------------- status/selection
 function renderStatus() {
   const s = $('status');
-  if (!editor.activePart) {
+  const moving = editor.moving != null ? store.pieces.get(editor.moving) : null;
+  const part = moving?.t ?? editor.activePart;
+  if (!part) {
     s.hidden = true;
     return;
   }
-  const d = PARTS[editor.activePart];
+  const d = PARTS[part];
   const v = editor.verdict;
   const mode = editor.placement ? (editor.placement.snapped ? 'Eingerastet' : 'Frei') : d.kind === 'bars' ? 'Zeige auf ein Fenster' : 'Zeige auf die Fläche';
   s.hidden = false;
   s.innerHTML = `<b>${esc(d.name)}</b><span class="mode">${mode}</span>
     ${v && !v.ok ? `<span class="bad">${esc(v.reason ?? '')}</span>` : ''}
-    <span class="k"><kbd>Klick</kbd> setzen · <kbd>Q</kbd><kbd>E</kbd> drehen · <kbd>X</kbd> Einrasten · <kbd>Rechtsklick</kbd>/<kbd>Esc</kbd> fertig</span>`;
+    ${moving
+      ? '<span class="k">Verschieben: <kbd>Loslassen</kbd> absetzen · <kbd>Q</kbd><kbd>E</kbd> drehen · <kbd>X</kbd> Einrasten · <kbd>Esc</kbd> abbrechen</span>'
+      : '<span class="k"><kbd>Klick</kbd> setzen · <kbd>Q</kbd><kbd>E</kbd> drehen · <kbd>X</kbd> Einrasten · <kbd>Rechtsklick</kbd>/<kbd>Esc</kbd> fertig</span>'}`;
 }
 
 function renderSelection() {
@@ -485,6 +518,7 @@ function toggleHelp(force?: boolean) {
     <h3>Bauen</h3>
     <div class="grid">
       ${row('<kbd>Klick</kbd>', 'Teil setzen / auswählen')}
+      ${row('Teil <kbd>ziehen</kbd>', 'Platziertes Teil verschieben')}
       ${row('<kbd>Q</kbd> <kbd>E</kbd>', 'Drehen bzw. Seite wechseln')}
       ${row('<kbd>Shift</kbd>+<kbd>Q</kbd>/<kbd>E</kbd>', 'Frei: um 90° drehen')}
       ${row('<kbd>X</kbd>', 'Einrasten an/aus')}
@@ -507,7 +541,8 @@ function toggleHelp(force?: boolean) {
     <p>Böden an Bodenkanten und auf Wänden der Ebene darunter, Wände und Türen an Bodenkanten, Halb- und Drittelwände übereinander, Treppen auf quadratische Böden,
     Wendeltreppen übereinander, Palisaden an Palisaden, Fenstergitter an Fensterwänden. Möbel stehen frei auf jeder Fläche.</p>
     <h3>Annahmen</h3>
-    <p>Das Wiki nennt keine Maße: der Planer nutzt ein 3-m-Raster und 3 m pro Ebene. Das Teile-Limit (${DEFAULT_PART_LIMIT}) und einige Raid-Werte (mit * markiert) sind geschätzt.
+    <p>Maße und Öffnungen stammen aus den Bauteil-Modellen der Aftermath-Mod (Raster 4,46 m, 2,92 m pro Ebene). Texturen sind nachgebaut, keine Spieldateien.
+    Das Teile-Limit (${DEFAULT_PART_LIMIT}) und einige Raid-Werte (mit * markiert) sind geschätzt.
     Unterhaltspreise trägst du selbst ein. Dieses Tool ist ein Fanprojekt und steht in keiner Verbindung zu Aftermath Gaming.</p>
   </div>`;
   $('helpClose').onclick = () => toggleHelp(false);
@@ -535,7 +570,9 @@ window.addEventListener('keydown', (e) => {
   if (ctrl) return;
   switch (k) {
     case 'escape':
-      if (!$('help').hidden) toggleHelp(false);
+      if (editor.moving != null) editor.endMove(false);
+      else if (editor.raidPick) editor.setRaidPick(false);
+      else if (!$('help').hidden) toggleHelp(false);
       else if (editor.activePart) editor.setActivePart(null);
       else editor.select(null);
       renderCards();

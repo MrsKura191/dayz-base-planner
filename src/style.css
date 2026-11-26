@@ -232,3 +232,6 @@ table.t td.r, table.t th.r { text-align: right; }
   .foot { display: none; }
   .brand small { display: none; }
 }
+
+.route-bar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.route-bar select { background: var(--panel-solid); color: var(--text); border: 1px solid var(--line-2); border-radius: 8px; height: 32px; padding: 0 6px; flex: 1; }

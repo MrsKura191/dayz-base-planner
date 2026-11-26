@@ -10,17 +10,20 @@
 - **Materialliste** mit Kit-Auflösung (Shutter-Türen brauchen ein Garage-Door-Kit). Wahlweise wird bis zu Scrap bzw. Logs heruntergerechnet.
 - **Werkzeuge** für die Werkbank, **Crafting-Vorgänge**, **Bedarf pro Ebene** und eine **Einkaufsliste** zum Kopieren.
 - **Unterhalt**: Teile pro Kostenkategorie. Die Preise trägst du selbst ein (das Wiki nennt keine).
+- **Teile verschieben**: Ein platziertes Teil anklicken und ziehen. Es rastet neu ein, `Q`/`E` drehen, `Esc` bricht ab.
 - **Raid-Analyse**: Breaching Charges, Sprit und Zeit mit der Kettensäge für alle Türen und Palisaden.
-- **Laufmodus** (`V`): WASD, rennen, springen, ducken, hinlegen, Türen öffnen (`F`), No-Clip (`N`).
+- **Raid-Pfad**: Loot-Raum markieren. Der Planer sucht den günstigsten Weg von außen (nach Ladungen oder Sprit), zeichnet ihn rot ein und meldet Schwachstellen wie Fenster ohne Gitter oder Wände, über die man klettern kann.
+- **Laufmodus** (`V`): WASD, rennen, springen, ducken, hinlegen, Türen öffnen (`F`), No-Clip (`N`). Wände und Decken blockieren.
 - **Pläne** werden im Browser gespeichert. Du kannst sie als JSON exportieren und importieren, per **Link teilen** (der Plan steckt komprimiert im Link) und als Screenshot speichern.
 
 ## Datenquelle
 
 Rezepte, Werkzeuge und Raid-Werte stammen aus dem öffentlichen [Aftermath-Wiki](https://aftermath-gaming.com/wiki), Stand 14.11.2026, und liegen in [`src/data.ts`](src/data.ts). Ändert der Server Rezepte, reicht eine Anpassung dort.
 
+Maße und Öffnungen (Raster 4,46 m, Wandhöhe 2,92 m, Türen, Fenster, Garagen- und Hangartore, rechteckiges Loch bei Porthole und Bodenluke) sind aus den Bauteil-Modellen der Aftermath-Mod ausgemessen. Die Texturen sind im Code nachgebaut und orientieren sich am Spiel; Spieldateien werden nicht mitgeliefert.
+
 Annahmen des Planers:
 
-- 3-m-Raster und 3 m pro Ebene, weil das Wiki keine Maße nennt.
 - Teile-Limit 3000.
 - Einige Raid-Werte; sie sind in der App mit `*` markiert.
 
