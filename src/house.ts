@@ -5,7 +5,8 @@
  * browser's IndexedDB so a reload does not need the file again.
  */
 import * as THREE from 'three';
-import { lodKind, readOdol, readPboFile, readPboIndex, type OdolLod, type OdolModel, type PboIndex } from './odol';
+import { lodKind, readOdol, readPboFile, readPboIndex, type OdolLod, type OdolModel, type OdolSection, type PboEntry, type PboIndex } from './odol';
+import { paaInfo, readPaa } from './paa';
 
 export interface SiteRef {
   id: string;
@@ -59,19 +60,71 @@ async function cachePut(key: string, bytes: Uint8Array) {
 }
 
 // --------------------------------------------------------- PBO sessions
+interface Lib {
+  file: File;
+  index: PboIndex;
+  /** path prefix of the archive, lower case, no slashes at the ends */
+  prefix: string;
+  byName: Map<string, PboEntry>;
+}
 /** PBO files the player picked in this session, by lower-case file name. */
-const pbos = new Map<string, { file: File; index: PboIndex }>();
+const pbos = new Map<string, Lib>();
+
+const norm = (p: string) => p.trim().replace(/\//g, '\\').replace(/^\\+/, '').toLowerCase();
 
 export async function openPbo(file: File) {
   const index = await readPboIndex(file);
-  pbos.set(file.name.toLowerCase(), { file, index });
+  const byName = new Map(index.entries.map((e) => [e.name.toLowerCase(), e]));
+  pbos.set(file.name.toLowerCase(), { file, index, prefix: norm(index.prefix).replace(/\\+$/, ''), byName });
   return index;
+}
+
+/** Open every .pbo among the files (e.g. a picked Addons folder). */
+export async function openPbos(files: File[], onProgress?: (done: number, total: number) => void) {
+  const list = files.filter((f) => /\.pbo$/i.test(f.name));
+  let done = 0;
+  let failed = 0;
+  let next = 0;
+  const worker = async () => {
+    while (next < list.length) {
+      const f = list[next++];
+      try {
+        await openPbo(f);
+      } catch {
+        failed++;
+      }
+      onProgress?.(++done, list.length);
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  retryTextures();
+  return { opened: list.length - failed, failed };
+}
+
+export function openedPbos() {
+  return [...pbos.entries()].map(([key, l]) => ({ key, name: l.file.name, index: l.index }));
 }
 
 export function pboModels(index: PboIndex) {
   return index.entries
     .filter((e) => /\.p3d$/i.test(e.name) && !/(^|\\)proxy(\\|$)|\\proxies?\\/i.test(e.name))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The archive and entry holding a game path like dz\structures\data\roof\x.paa. */
+function resolvePath(path: string): { lib: Lib; entry: PboEntry } | null {
+  const p = norm(path);
+  let best: { lib: Lib; entry: PboEntry } | null = null;
+  let bestLen = -1;
+  for (const lib of pbos.values()) {
+    if (!lib.prefix || !p.startsWith(lib.prefix + '\\') || lib.prefix.length <= bestLen) continue;
+    const entry = lib.byName.get(p.slice(lib.prefix.length + 1));
+    if (entry) {
+      best = { lib, entry };
+      bestLen = lib.prefix.length;
+    }
+  }
+  return best;
 }
 
 const built = new Map<string, Promise<THREE.Group>>();
@@ -85,7 +138,7 @@ export async function loadModel(pbo: string, path: string): Promise<THREE.Group 
   if (!bytes) {
     const src = pbos.get(pbo.toLowerCase());
     if (!src) return null;
-    const e = src.index.entries.find((x) => x.name.toLowerCase() === path.toLowerCase());
+    const e = src.byName.get(path.toLowerCase().replace(/\//g, '\\'));
     if (!e) throw new Error('Modell nicht in der PBO gefunden');
     bytes = await readPboFile(src.file, e);
   }
@@ -109,16 +162,17 @@ interface Look {
   color: number;
   glass?: boolean;
   roughness?: number;
+  /** colour texture of the face */
+  map?: string;
+  /** texture with cut-out alpha (fences, leaves, frames) */
+  cutout?: boolean;
+  /** multi-material: four layer textures and the mask; drawn in their mixed average colour for now */
+  multi?: string[];
 }
 
-function lookFor(texture: string, material: string): Look {
-  const s = (texture + ' ' + material).toLowerCase();
-  const proc = /color\(([\d.]+),([\d.]+),([\d.]+)/.exec(texture);
-  if (/glass|okno|window_glass|sklo/.test(s)) return { color: 0x9fb8c4, glass: true };
-  if (proc && !/nohq|smdi|_as|_mc|dt/.test(texture.toLowerCase())) {
-    const c = new THREE.Color(+proc[1], +proc[2], +proc[3]);
-    return { color: c.getHex() };
-  }
+const lookKey = (l: Look) => [l.color, l.glass ? 1 : 0, l.roughness ?? 0.9, l.map ?? '', l.cutout ? 1 : 0, (l.multi ?? []).join(';')].join('|');
+
+function colourGuess(s: string): Look {
   if (/roof|strecha|tiles?_|ceramic|tile_roof/.test(s)) return { color: 0x7a4a3c };
   if (/metal|iron|steel|plech|tin|zinc/.test(s)) return { color: 0x7b8086, roughness: 0.6 };
   if (/wood|drev|plank|door|dvere|prkn/.test(s)) return { color: 0x7a5c40 };
@@ -130,17 +184,138 @@ function lookFor(texture: string, material: string): Look {
   return { color: 0xaaa290 };
 }
 
-const matCache = new Map<string, THREE.Material>();
+function lookFor(sec: OdolSection): Look {
+  const { texture, material } = sec;
+  const s = (texture + ' ' + material).toLowerCase();
+  const glass = /glass|okno|window_glass|sklo/.test(s);
+  const guess = colourGuess(s);
+  if (/\.(paa|tga|png)$/i.test(texture)) {
+    return { color: glass ? 0x9fb8c4 : guess.color, glass, map: texture, cutout: !glass && /_ca\.paa$/i.test(texture), roughness: glass ? 0.1 : guess.roughness };
+  }
+  const proc = /color\(([\d.]+),([\d.]+),([\d.]+)/.exec(texture);
+  if (proc) return { color: new THREE.Color(+proc[1], +proc[2], +proc[3]).getHex(), glass };
+  if (glass) return { color: 0x9fb8c4, glass: true };
+  // multi-materials: stages 1-4 are the layers, stage 5 the mask
+  const st = sec.stages;
+  if (st.length >= 5 && /_mask\.paa$/i.test(st[4]) && st.slice(0, 4).every((x) => /\.paa$/i.test(x) || /color\(/.test(x))) {
+    return { ...guess, multi: st.slice(0, 5) };
+  }
+  return guess;
+}
+
+const matCache = new Map<string, THREE.MeshStandardMaterial>();
 function materialFor(look: Look) {
-  const k = `${look.color}|${look.glass ? 1 : 0}|${look.roughness ?? 0.9}`;
+  const k = lookKey(look);
   let m = matCache.get(k);
   if (!m) {
     m = look.glass
       ? new THREE.MeshStandardMaterial({ color: look.color, transparent: true, opacity: 0.28, roughness: 0.1, depthWrite: false, side: THREE.DoubleSide })
       : new THREE.MeshStandardMaterial({ color: look.color, roughness: look.roughness ?? 0.9, side: THREE.DoubleSide });
+    m.userData.look = look;
     matCache.set(k, m);
+    void texturize(m);
   }
   return m;
+}
+
+// ------------------------------------------------------------ textures
+/** paths whose texture was not found in any opened PBO */
+export const missingTextures = new Set<string>();
+const texBytesJobs = new Map<string, Promise<Uint8Array | null>>();
+
+async function textureBytes(path: string): Promise<Uint8Array | null> {
+  const key = 'tex|' + norm(path);
+  const have = texBytesJobs.get(key);
+  if (have) return have;
+  const job = (async () => {
+    const cached = await cacheGet(key);
+    if (cached) return cached;
+    const hit = resolvePath(path);
+    if (!hit) return null;
+    const b = await readPboFile(hit.lib.file, hit.entry);
+    void cachePut(key, b);
+    return b;
+  })();
+  texBytesJobs.set(key, job);
+  const b = await job.catch(() => null);
+  if (!b) {
+    texBytesJobs.delete(key); // try again once more PBOs are open
+    missingTextures.add(norm(path));
+  } else missingTextures.delete(norm(path));
+  return b;
+}
+
+const texJobs = new Map<string, Promise<THREE.Texture | null>>();
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+function loadTexture(path: string): Promise<THREE.Texture | null> {
+  const key = norm(path);
+  const have = texJobs.get(key);
+  if (have) return have;
+  const job = (async () => {
+    const b = await textureBytes(path);
+    if (!b) return null;
+    await tick(); // decode one texture at a time without freezing the page
+    const img = readPaa(b, 1024);
+    const tex = new THREE.DataTexture(img.rgba, img.width, img.height, THREE.RGBAFormat);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    return tex;
+  })();
+  texJobs.set(key, job);
+  job.then((t) => {
+    if (!t) texJobs.delete(key);
+  }, () => texJobs.delete(key));
+  return job.catch(() => null);
+}
+
+async function averageOf(path: string): Promise<THREE.Color | null> {
+  const proc = /color\(([\d.]+),([\d.]+),([\d.]+)/.exec(path);
+  if (proc) return new THREE.Color(+proc[1], +proc[2], +proc[3]);
+  const b = await textureBytes(path);
+  const avg = b ? paaInfo(b).avg : null;
+  return avg ? new THREE.Color().setRGB(avg[0], avg[1], avg[2], THREE.SRGBColorSpace) : null;
+}
+
+async function texturize(m: THREE.MeshStandardMaterial) {
+  const look = m.userData.look as Look;
+  if (m.userData.textured) return;
+  if (look.map) {
+    const tex = await loadTexture(look.map);
+    if (!tex) return;
+    m.map = tex;
+    m.color.set(0xffffff);
+    if (look.glass) m.opacity = /_ca\.paa$/i.test(look.map) ? 1 : 0.45;
+    if (look.cutout) {
+      m.alphaTest = 0.5;
+      m.transparent = false;
+    }
+    m.userData.textured = true;
+    m.needsUpdate = true;
+  } else if (look.multi) {
+    // mixed walls: the layers' average colours, weighted by how much of the mask each covers
+    const [layers, mask] = [look.multi.slice(0, 4), look.multi[4]];
+    const cols = await Promise.all(layers.map(averageOf));
+    const mk = await averageOf(mask);
+    if (!mk || cols.some((c) => !c)) return;
+    const w = [Math.max(0, 1 - mk.r - mk.g - mk.b), mk.r, mk.g, mk.b];
+    const sum = w.reduce((a, b) => a + b, 0) || 1;
+    const c = new THREE.Color(0, 0, 0);
+    cols.forEach((col, i) => c.add(col!.clone().multiplyScalar(w[i] / sum)));
+    m.color.copy(c);
+    m.userData.textured = true;
+    m.needsUpdate = true;
+  }
+}
+
+/** After more PBOs were opened: fill in textures that were missing. */
+export function retryTextures() {
+  for (const m of matCache.values()) if (!m.userData.textured) void texturize(m);
 }
 
 /** Triangles of the given faces, grouped by look, as one geometry with groups. */
@@ -153,8 +328,8 @@ function meshOf(lod: OdolLod, faceIds: number[], ground: number, origin = new TH
   for (const f of faceIds) {
     const sec = lod.sections[sectionOf[f]];
     if (sec && !sec.texture && !sec.material) continue; // proxy markers and hidden faces
-    const look = sec ? lookFor(sec.texture, sec.material) : { color: 0xaaa290 };
-    const k = `${look.color}|${look.glass ? 1 : 0}|${look.roughness ?? 0.9}`;
+    const look: Look = sec ? lookFor(sec) : { color: 0xaaa290 };
+    const k = lookKey(look);
     let g = byLook.get(k);
     if (!g) byLook.set(k, (g = { look, tris: [] }));
     const v = lod.faces[f];
@@ -166,6 +341,7 @@ function meshOf(lod: OdolLod, faceIds: number[], ground: number, origin = new TH
   if (!byLook.size) return null;
   const used = new Map<number, number>();
   const pos: number[] = [];
+  const uv: number[] = [];
   const index: number[] = [];
   const groups: { start: number; count: number; mat: THREE.Material }[] = [];
   for (const { look, tris } of byLook.values()) {
@@ -176,6 +352,7 @@ function meshOf(lod: OdolLod, faceIds: number[], ground: number, origin = new TH
         const p = P(lod.points, vi, ground).sub(origin);
         k = pos.length / 3;
         pos.push(p.x, p.y, p.z);
+        if (lod.uv) uv.push(lod.uv[vi * 2], lod.uv[vi * 2 + 1]);
         used.set(vi, k);
       }
       index.push(k);
@@ -184,6 +361,7 @@ function meshOf(lod: OdolLod, faceIds: number[], ground: number, origin = new TH
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  if (uv.length) geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geo.setIndex(index);
   geo.computeVertexNormals();
   geo.computeBoundingSphere();

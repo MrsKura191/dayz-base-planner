@@ -183,12 +183,22 @@ class R {
 }
 
 // ------------------------------------------------------------------ model
+export interface OdolMaterial {
+  name: string;
+  /** stage textures in order (stage 1 first) */
+  textures: string[];
+  /** per texture generator: UV source and 4x3 matrix */
+  uvTransforms: { source: number; m: number[] }[];
+}
+
 export interface OdolSection {
   /** first and last face (indices into faces) */
   from: number;
   to: number;
   texture: string;
   material: string;
+  /** stage textures of the section's material (empty when it has none) */
+  stages: string[];
 }
 
 export interface OdolLod {
@@ -223,7 +233,7 @@ function readIndexArray(r: R): number[] {
   return out;
 }
 
-function skipMaterial(r: R): string {
+function readMaterial(r: R): OdolMaterial {
   const name = r.asciiz();
   const v = r.u32();
   if (v >= 20) {
@@ -240,13 +250,20 @@ function skipMaterial(r: R): string {
   }
   const stages = v > 6 ? r.count(64) : 0;
   const gens = v > 8 ? r.count(64) : stages;
+  const textures: string[] = [];
+  const uvTransforms: { source: number; m: number[] }[] = [];
   const stage = () => {
     if (v >= 5) r.skip(4);
-    r.asciiz();
+    textures.push(r.asciiz());
     if (v >= 8) r.skip(4);
     if (v >= 11) r.skip(1);
   };
-  const transform = () => r.skip(4 + 48);
+  const transform = () => {
+    const source = r.u32();
+    const m: number[] = [];
+    for (let i = 0; i < 12; i++) m.push(r.f32());
+    uvTransforms.push({ source, m });
+  };
   if (v < 8) {
     for (let i = 0; i < stages; i++) {
       transform();
@@ -256,8 +273,11 @@ function skipMaterial(r: R): string {
     for (let i = 0; i < stages; i++) stage();
     for (let i = 0; i < gens; i++) transform();
   }
-  if (v >= 10) stage();
-  return name;
+  if (v >= 10) {
+    stage();
+    textures.pop(); // the TI stage, not a colour texture
+  }
+  return { name, textures, uvTransforms };
 }
 
 function readLod(r: R, resolution: number): OdolLod {
@@ -280,8 +300,8 @@ function readLod(r: R, resolution: number): OdolLod {
   const textures: string[] = [];
   for (let i = 0; i < nTex; i++) textures.push(r.asciiz());
   const nMat = r.count(100_000);
-  const materials: string[] = [];
-  for (let i = 0; i < nMat; i++) materials.push(skipMaterial(r));
+  const materials: OdolMaterial[] = [];
+  for (let i = 0; i < nMat; i++) materials.push(readMaterial(r));
   readIndexArray(r); // point to vertex
   readIndexArray(r); // vertex to point
 
@@ -321,13 +341,13 @@ function readLod(r: R, resolution: number): OdolLod {
     const tex = r.i16();
     r.skip(4);
     const mat = r.i32();
-    let matName = mat >= 0 ? (materials[mat] ?? '') : '';
+    let matName = mat >= 0 ? (materials[mat]?.name ?? '') : '';
     if (mat === -1) matName = r.asciiz();
     if (v >= 36) {
       r.skip(4 * r.count(1000));
       if (v >= 67 && r.i32() >= 1) r.skip(44);
     } else r.skip(4);
-    sections.push({ from: firstFaceAt(lo), to: firstFaceAt(hi), texture: tex >= 0 ? (textures[tex] ?? '') : '', material: matName });
+    sections.push({ from: firstFaceAt(lo), to: firstFaceAt(hi), texture: tex >= 0 ? (textures[tex] ?? '') : '', material: matName, stages: mat >= 0 ? (materials[mat]?.textures ?? []) : [] });
   }
 
   const nSel = r.count(100_000);
@@ -492,7 +512,7 @@ export interface PboIndex {
 
 /** Read a PBO's file table from its first bytes (the header is at the start). */
 export async function readPboIndex(file: Blob): Promise<PboIndex> {
-  let chunk = 1 << 20;
+  let chunk = 1 << 18;
   for (;;) {
     const head = new Uint8Array(await file.slice(0, Math.min(chunk, file.size)).arrayBuffer());
     const res = parsePboHeader(head, chunk >= file.size);

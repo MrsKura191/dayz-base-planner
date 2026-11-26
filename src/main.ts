@@ -13,8 +13,7 @@ import { anchorFrom, exportDze, MAPS, piecesFromDze, readDze, type Anchor, type 
 import { Store } from './store';
 import { renderThumbs } from './thumbs';
 import { WalkMode } from './walk';
-import { instance, loadModel, modelName, openPbo, placeholder, placeSite, pboModels, sanitizeSites, siteKey, type SiteRef } from './house';
-import type { PboIndex } from './odol';
+import { instance, loadModel, missingTextures, modelName, openedPbos, openPbos, placeholder, placeSite, pboModels, sanitizeSites, siteKey, type SiteRef } from './house';
 
 // ------------------------------------------------------------------ layout
 const app = document.getElementById('app')!;
@@ -76,7 +75,8 @@ app.innerHTML = `
   <input type="file" id="dzeImportFile" accept=".dze" hidden>
   <div class="help-wrap" id="dayz" hidden></div>
   <div class="help-wrap" id="houses" hidden></div>
-  <input type="file" id="pboFile" accept=".pbo" hidden>
+  <input type="file" id="pboFile" accept=".pbo" multiple hidden>
+  <input type="file" id="pboDir" webkitdirectory multiple hidden>
 </div>
 <footer class="catalog" id="catalog">
   <div class="cat-head" id="catHead"></div>
@@ -95,7 +95,9 @@ let design: Design = { id: newId(), name: 'Meine Basis', updated: Date.now(), pi
 let sites: SiteRef[] = [];
 const siteObjects = new Map<string, THREE.Object3D>();
 const siteState = new Map<string, 'ok' | 'missing' | 'error' | 'loading'>();
-let pboOpen: { name: string; index: PboIndex; models: { name: string; size: number }[] } | null = null;
+/** models of all opened PBOs */
+let catalog: { pbo: string; name: string; size: number; building: boolean }[] | null = null;
+let onlyBuildings = true;
 let houseQuery = '';
 let houseBusy = '';
 
@@ -943,17 +945,20 @@ function renderHouses(note = '') {
     <button class="tb close" data-hs="close">${I.x}</button>
     <h2>Gebäude aus DayZ</h2>
     <p>Lade einzelne Gebäude direkt aus deinen DayZ-Spieldateien und bau darin oder daneben. Die Datei wird <b>nur in deinem Browser</b> gelesen – es wird nichts hochgeladen, und der Planer enthält selbst keine DayZ-Modelle.</p>
-    <h3>1 · PBO-Datei wählen</h3>
+    <h3>1 · Spieldateien wählen</h3>
     <div class="dz-row">
-      <button class="btn primary" data-hs="pick">${I.upload} PBO-Datei wählen</button>
-      ${pboOpen ? `<span class="info" style="margin:0">Geöffnet: <b>${esc(pboOpen.name)}</b> · ${pboOpen.models.length} Modelle</span>` : ''}
+      <button class="btn primary" data-hs="dir">${I.folder} Addons-Ordner wählen</button>
+      <button class="btn" data-hs="pick">${I.upload} Einzelne PBO-Dateien</button>
+      ${catalog ? `<span class="info" style="margin:0">${openedPbos().length} PBOs geöffnet · ${catalog.length} Modelle</span>` : ''}
     </div>
-    <p class="info">Die Gebäude der Karten liegen in <code>Steam\\steamapps\\common\\DayZ\\Addons\\</code>: <b>structures_residential.pbo</b> (Wohnhäuser), <b>structures_industrial.pbo</b>, <b>structures_military.pbo</b>, <b>structures_specific.pbo</b> … Mod-Gebäude liegen im Ordner <code>Addons</code> des jeweiligen Mods.</p>
+    <p class="info">Wähle den Ordner <code>Steam\\steamapps\\common\\DayZ\\Addons</code>. Dann findet der Planer zu jedem Gebäude auch die Texturen, die oft in anderen PBOs liegen (z. B. <b>structures_data.pbo</b>). Der Browser fragt dabei, ob er die Dateien „hochladen“ darf – das ist nur der Standardtext: Sie werden ausschließlich lokal gelesen. Für Mod-Gebäude zusätzlich den <code>Addons</code>-Ordner des Mods wählen.</p>
     ${missing.length ? `<div class="warn">Für ${missing.length > 1 || sites.filter((s) => siteState.get(s.id) === 'missing').length > 1 ? 'einige Gebäude' : 'ein Gebäude'} dieses Plans fehlt das Modell. Wähle ${missing.map((p) => `<b>${esc(p)}</b>`).join(', ')}.</div>` : ''}
     ${houseBusy ? `<div class="info box">${esc(houseBusy)}</div>` : ''}
     ${note ? `<div class="info box">${note}</div>` : ''}
-    ${pboOpen ? `<h3>2 · Gebäude hinzufügen</h3>
-    <div class="dz-row"><input class="design-name" data-hs="q" placeholder="Suchen, z. B. house, barn, garage …" value="${esc(houseQuery)}" style="flex:1;min-width:220px"></div>
+    ${missingTextures.size && sites.length ? `<div class="warn">${missingTextures.size} Texturen nicht gefunden – wähle den ganzen Addons-Ordner, damit auch die gemeinsamen Texturen gefunden werden.</div>` : ''}
+    ${catalog ? `<h3>2 · Gebäude hinzufügen</h3>
+    <div class="dz-row"><input class="design-name" data-hs="q" placeholder="Suchen, z. B. house, barn, garage …" value="${esc(houseQuery)}" style="flex:1;min-width:220px">
+      <label><input type="checkbox" data-hs="only" ${onlyBuildings ? 'checked' : ''}> nur Gebäude</label></div>
     <div class="hs-list" id="hsList"></div>` : ''}
     ${sites.length ? `<h3>Im Plan</h3>
     <div class="hs-sites">${sites
@@ -980,13 +985,13 @@ function renderHouses(note = '') {
 
 function renderHouseList() {
   const el = document.getElementById('hsList');
-  if (!el || !pboOpen) return;
+  if (!el || !catalog) return;
   const q = houseQuery.trim().toLowerCase();
-  const hits = pboOpen.models.filter((m) => !q || m.name.toLowerCase().includes(q));
+  const hits = catalog.filter((m) => (!onlyBuildings || m.building) && (!q || m.name.toLowerCase().includes(q) || m.pbo.toLowerCase().includes(q)));
   el.innerHTML =
     hits
       .slice(0, 250)
-      .map((m) => `<button class="hs-item" data-hs="add" data-path="${esc(m.name)}"><span>${esc(modelName(m.name))}</span><small>${esc(m.name)} · ${(m.size / 1024).toFixed(0)} KB</small></button>`)
+      .map((m) => `<button class="hs-item" data-hs="add" data-pbo="${esc(m.pbo)}" data-path="${esc(m.name)}"><span>${esc(modelName(m.name))}</span><small>${esc(m.pbo)} · ${esc(m.name)} · ${(m.size / 1024).toFixed(0)} KB</small></button>`)
       .join('') + (hits.length > 250 ? `<p class="info">… ${hits.length - 250} weitere – Suche verfeinern.</p>` : hits.length ? '' : '<p class="info">Nichts gefunden.</p>');
 }
 
@@ -1000,6 +1005,11 @@ $('houses').addEventListener('input', (e) => {
 
 $('houses').addEventListener('change', (e) => {
   const el = e.target as HTMLInputElement;
+  if (el.dataset.hs === 'only') {
+    onlyBuildings = el.checked;
+    renderHouseList();
+    return;
+  }
   const k = el.dataset.hs as 'x' | 'y' | 'z' | 'r';
   if (!['x', 'y', 'z', 'r'].includes(k)) return;
   const s = sites.find((x) => x.id === el.closest<HTMLElement>('.hs-site')?.dataset.id);
@@ -1018,12 +1028,13 @@ $('houses').addEventListener('click', async (e) => {
   const s = sites.find((x) => x.id === b.closest<HTMLElement>('.hs-site')?.dataset.id);
   if (act === 'close') toggleHouses(false);
   if (act === 'pick') $('pboFile').click();
-  if (act === 'add' && pboOpen) {
+  if (act === 'dir') $('pboDir').click();
+  if (act === 'add' && catalog) {
     const path = b.dataset.path!;
     const t = editor.focusPoint();
     const ref: SiteRef = {
       id: newId(),
-      pbo: pboOpen.name,
+      pbo: b.dataset.pbo!,
       path,
       name: modelName(path),
       x: Math.round(t.x * 2) / 2,
@@ -1062,23 +1073,36 @@ $('houses').addEventListener('click', async (e) => {
   renderHouses();
 });
 
-($('pboFile') as HTMLInputElement).onchange = async (e) => {
-  const input = e.target as HTMLInputElement;
-  const f = input.files?.[0];
+async function openGameFiles(input: HTMLInputElement) {
+  const files = [...(input.files ?? [])];
   input.value = '';
-  if (!f) return;
-  houseBusy = `Lese ${f.name} …`;
-  renderHouses();
-  try {
-    const index = await openPbo(f);
-    const models = pboModels(index).map((m) => ({ name: m.name, size: m.size }));
-    pboOpen = { name: f.name, index, models };
-    houseBusy = '';
-    houseQuery = '';
-    await syncSites();
-    renderHouses(models.length ? '' : 'In dieser PBO sind keine Modelle.');
-  } catch (err) {
-    houseBusy = '';
-    renderHouses(`Datei konnte nicht gelesen werden (${esc(String((err as Error).message ?? err))}).`);
+  const list = files.filter((f) => /\.pbo$/i.test(f.name));
+  if (!files.length) return;
+  if (!list.length) {
+    renderHouses('In der Auswahl ist keine .pbo-Datei. Wähle den Ordner <code>DayZ\\Addons</code>.');
+    return;
   }
-};
+  houseBusy = `Lese ${list.length} PBO-Dateien …`;
+  renderHouses();
+  const res = await openPbos(list, (done, total) => {
+    houseBusy = `Lese PBO-Dateien … ${done} / ${total}`;
+    const box = document.querySelector('#houses .info.box');
+    if (box) box.textContent = houseBusy;
+  });
+  const isBuilding = (pbo: string, path: string) =>
+    /structures|building|house|ruin|wreck|bunker|base/i.test(pbo) || /(^|\\)(houses?|buildings?|structures?|ruins?)\\/i.test(path);
+  catalog = openedPbos().flatMap((p) =>
+    pboModels(p.index).map((e) => ({ pbo: p.name, name: e.name, size: e.size, building: isBuilding(p.name + ' ' + p.index.prefix, e.name) })),
+  );
+  catalog.sort((a, b) => Number(b.building) - Number(a.building) || a.pbo.localeCompare(b.pbo) || a.name.localeCompare(b.name));
+  houseBusy = '';
+  houseQuery = '';
+  await syncSites();
+  renderHouses(
+    `${res.opened} PBO${res.opened === 1 ? '' : 's'} geöffnet${res.failed ? `, ${res.failed} nicht lesbar` : ''}.` +
+      (catalog.length ? '' : ' Darin sind keine Modelle.'),
+  );
+}
+
+($('pboFile') as HTMLInputElement).onchange = (e) => void openGameFiles(e.target as HTMLInputElement);
+($('pboDir') as HTMLInputElement).onchange = (e) => void openGameFiles(e.target as HTMLInputElement);
