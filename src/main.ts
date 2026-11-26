@@ -1,4 +1,3 @@
-import './style.css';
 import { DATA_AS_OF, DEFAULT_PART_LIMIT, MAX_LEVEL, WIKI_URL } from './constants';
 import { CATEGORIES, PART_ORDER, PARTS, type Category } from './data';
 import { Editor } from './editor';
@@ -84,7 +83,7 @@ let design: Design = { id: newId(), name: 'Meine Basis', updated: Date.now(), pi
 let tab: 'mat' | 'phase' | 'upkeep' | 'raid' = 'mat';
 let catTab: Category = 'wood';
 let search = '';
-const thumbs = new Map<string, string>();
+const thumbs = new Map<string, HTMLCanvasElement>();
 const route: { target: RaidTarget | null; metric: Metric; picking: boolean } = { target: null, metric: 'charges', picking: false };
 
 const editor = new Editor($('viewport'), store, {
@@ -292,7 +291,13 @@ $('tbTerritory').onclick = () => {
   editor.setTerritoryVisible(!editor.showTerritory);
   renderToolbar();
 };
-$('tbShot').onclick = () => download(fileSafe(design.name) + '.png', editor.screenshot());
+$('tbShot').onclick = () => {
+  try {
+    download(fileSafe(design.name) + '.png', editor.screenshot());
+  } catch {
+    toast('Screenshot vom Browser blockiert (Fingerprinting-Schutz)');
+  }
+};
 $('tbShare').onclick = () => share();
 $('tbHelp').onclick = () => toggleHelp();
 $('tbPanel').onclick = () => {
@@ -425,13 +430,19 @@ function renderCards() {
     .map((id) => {
       const d = PARTS[id];
       const cost = costLine(id);
-      const img = thumbs.get(id);
       return `<button class="card ${editor.activePart === id ? 'on' : ''}" data-part="${id}" title="${esc(d.name + (d.note ? ' – ' + d.note : ''))}">
-        <div class="img">${img ? `<img src="${img}" alt="">` : ''}</div>
+        <div class="img"><canvas width="192" height="128" data-thumb="${id}"></canvas></div>
         <div class="nm">${esc(d.name)}</div>
         <div class="cost ${cost ? '' : 'unknown'}">${esc(cost ?? 'Kosten nicht im Wiki')}</div></button>`;
     })
     .join('') || '<div class="info">Nichts gefunden.</div>';
+  for (const c of $('cards').querySelectorAll<HTMLCanvasElement>('canvas[data-thumb]')) paintThumb(c);
+}
+
+/** Copy a rendered preview into a card canvas (no toDataURL, so canvas-blocking browsers still show it). */
+function paintThumb(c: HTMLCanvasElement) {
+  const src = thumbs.get(c.dataset.thumb!);
+  if (src) c.getContext('2d')?.drawImage(src, 0, 0);
 }
 
 $('catHead').addEventListener('click', (e) => {
@@ -656,8 +667,8 @@ async function boot() {
 }
 boot();
 
-renderThumbs(PART_ORDER, (id, url) => {
-  thumbs.set(id, url);
-  const img = document.querySelector<HTMLElement>(`.card[data-part="${id}"] .img`);
-  if (img) img.innerHTML = `<img src="${url}" alt="">`;
-});
+renderThumbs(PART_ORDER, (id, canvas) => {
+  thumbs.set(id, canvas);
+  const c = document.querySelector<HTMLCanvasElement>(`canvas[data-thumb="${id}"]`);
+  if (c) paintThumb(c);
+}).catch((e) => console.warn('Vorschaubilder nicht verfügbar', e));

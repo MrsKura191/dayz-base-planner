@@ -62,7 +62,8 @@ export type Opening =
 export type Kind = 'floor' | 'wall' | 'stairs' | 'spiral' | 'palisade' | 'bars' | 'object' | 'plotpole';
 export type ObjStyle =
   | 'box' | 'workbench' | 'storage' | 'sign' | 'greenhouse' | 'shed' | 'sandbag'
-  | 'sandbag_corner' | 'sandbag_round' | 'hesco' | 'camonet' | 'machine';
+  | 'sandbag_corner' | 'sandbag_round' | 'hesco' | 'camonet' | 'machine'
+  | 'case' | 'shelf' | 'dresser' | 'toolchest' | 'fridge' | 'medic' | 'gunrack' | 'locker' | 'arcade';
 
 export interface RaidInfo {
   charges: number;
@@ -208,12 +209,12 @@ const list: PartDef[] = [
   // ------------------------------------------------------------ Allgemein
   { id: 'plot_pole', name: 'Plot Pole', cat: 'general', kind: 'plotpole', look: 'metal', size: [0.4, 2.6, 0.4],
     recipe: { scrap: 1, longstick: 1 }, tools: [], upkeep: 'other', note: 'Beansprucht das Territorium (25 m Radius). Nur eine pro Basis.' },
-  { id: 'workbench', name: 'Workbench', cat: 'general', kind: 'object', look: 'wood', style: 'workbench', size: [2, 1, 0.9],
+  { id: 'workbench', name: 'Workbench', cat: 'general', kind: 'object', look: 'wood', style: 'workbench', size: [2.37, 0.92, 0.85],
     recipe: { planks: 10, nails: 40 }, tools: [], handCraft: true, upkeep: 'furniture', note: 'Wird von Hand gecraftet.' },
-  { id: 'wood_storage', name: 'Wood Storage', cat: 'general', kind: 'object', look: 'wood', style: 'storage', size: [1.6, 1.7, 1.2],
+  { id: 'wood_storage', name: 'Wood Storage', cat: 'general', kind: 'object', look: 'wood', style: 'storage', size: [1.6, 1.7, 1.18], color: '#6b3b37',
     recipe: { planks: 10, nails: 30, scrap: 4 }, tools: ['hammer', 'crowbar', 'hacksaw'], upkeep: 'storage',
     note: 'Inhalt zählt als Werkbank-Material, wenn höchstens 4 m entfernt.' },
-  { id: 'sign', name: 'Sign', cat: 'general', kind: 'object', look: 'wood', style: 'sign', size: [0.8, 1.2, 0.1],
+  { id: 'sign', name: 'Sign', cat: 'general', kind: 'object', look: 'wood', style: 'sign', size: [0.68, 0.26, 0.08],
     recipe: { planks: 1, nails: 5 }, tools: ['hammer', 'hacksaw'], upkeep: 'other' },
   { id: 'wood_greenhouse', name: 'Wood Greenhouse', cat: 'general', kind: 'object', look: 'wood', style: 'greenhouse', size: [3, 2.4, 4],
     recipe: { sand: 1, glass: 3, planks: 10, nails: 30 }, tools: ['shovel', 'hammer'], upkeep: 'furniture' },
@@ -232,28 +233,29 @@ const list: PartDef[] = [
 ];
 
 // ------------------------------------------------------------- Möbel & Lager
-const furniture: [string, string, [number, number, number], string, UpkeepCat][] = [
-  ['small_case', 'Small Case', [1, 0.6, 0.6], '#4a4f45', 'storage'],
-  ['medium_case', 'Medium Case', [1.4, 0.7, 0.7], '#4a4f45', 'storage'],
-  ['large_case', 'Large Case', [1.8, 0.9, 0.9], '#4a4f45', 'storage'],
-  ['long_case', 'Long Case', [2, 0.5, 0.5], '#4a4f45', 'storage'],
-  ['shelf', 'Shelf', [1.2, 2, 0.5], '#6b5a44', 'storage'],
-  ['dresser', 'Dresser', [1.4, 1, 0.6], '#6b5a44', 'storage'],
-  ['tools_cabinet', 'Tools Cabinet', [1, 1.9, 0.5], '#7a3d33', 'storage'],
-  ['fridge', 'Fridge', [0.8, 1.9, 0.7], '#c9cdd0', 'storage'],
-  ['medic_case', 'Medic Case', [1, 0.6, 0.6], '#c9cdd0', 'storage'],
-  ['gun_cabinet', 'Gun Cabinet', [1.5, 1.9, 0.5], '#3e4a3a', 'storage'],
-  ['rifle_locker', 'Rifle Locker', [0.9, 1.9, 0.5], '#3e4a3a', 'storage'],
-  ['locker', 'Locker', [0.6, 1.9, 0.5], '#55606a', 'storage'],
-  ['dustbin', 'Dustbin', [0.6, 1, 0.6], '#3d4a3d', 'furniture'],
-  ['arcade', 'Arcade Machine', [0.8, 1.8, 0.8], '#2f3a6b', 'furniture'],
-  ['trophy_skull', 'Trophy Skull', [0.5, 0.5, 0.4], '#d8d0bd', 'furniture'],
-  ['water_cooler', 'Water Cooler', [0.4, 1.2, 0.4], '#6fa3c4', 'furniture'],
-  ['bottle_rack', 'Bottle Rack', [0.5, 1, 0.4], '#5d6670', 'furniture'],
+// Sizes measured from the Aftermath furniture models, colours taken from their textures.
+const furniture: [string, string, [number, number, number], string, UpkeepCat, ObjStyle][] = [
+  ['small_case', 'Small Case', [0.85, 0.38, 0.69], '#353536', 'storage', 'case'],
+  ['medium_case', 'Medium Case', [1.22, 0.65, 0.7], '#353536', 'storage', 'case'],
+  ['large_case', 'Large Case', [1.72, 0.75, 0.93], '#353536', 'storage', 'case'],
+  ['long_case', 'Long Case', [1.84, 0.27, 0.57], '#353536', 'storage', 'case'],
+  ['shelf', 'Shelf', [1.63, 1.85, 0.53], '#2f2e2e', 'storage', 'shelf'],
+  ['dresser', 'Dresser', [1.0, 1.01, 0.68], '#86593e', 'storage', 'dresser'],
+  ['tools_cabinet', 'Tools Cabinet', [0.93, 1.15, 0.54], '#53231e', 'storage', 'toolchest'],
+  ['fridge', 'Fridge', [1.0, 1.84, 0.8], '#cfd0cf', 'storage', 'fridge'],
+  ['medic_case', 'Medic Case', [1.08, 0.38, 0.69], '#bcab88', 'storage', 'medic'],
+  ['gun_cabinet', 'Gun Cabinet', [1.16, 1.74, 0.46], '#55646e', 'storage', 'gunrack'],
+  ['rifle_locker', 'Rifle Locker', [0.72, 1.64, 0.6], '#566045', 'storage', 'locker'],
+  ['locker', 'Locker', [0.45, 2.0, 0.55], '#3d3d3d', 'storage', 'locker'],
+  ['dustbin', 'Dustbin', [0.6, 1.0, 0.6], '#3d4a3d', 'furniture', 'box'],
+  ['arcade', 'Arcade Machine', [0.92, 2.07, 0.71], '#1c1c22', 'furniture', 'arcade'],
+  ['trophy_skull', 'Trophy Skull', [0.5, 0.5, 0.4], '#d8d0bd', 'furniture', 'box'],
+  ['water_cooler', 'Water Cooler', [0.4, 1.2, 0.4], '#6fa3c4', 'furniture', 'box'],
+  ['bottle_rack', 'Bottle Rack', [0.5, 1.0, 0.4], '#5d6670', 'furniture', 'box'],
 ];
-for (const [id, name, size, color, upkeep] of furniture) {
+for (const [id, name, size, color, upkeep, style] of furniture) {
   list.push({
-    id, name, cat: 'furniture', kind: 'object', look: 'furniture', style: 'box', size, color,
+    id, name, cat: 'furniture', kind: 'object', look: 'furniture', style, size, color,
     recipe: null, tools: [], upkeep, note: 'Kosten nicht im Wiki (Händler/Loot).',
   });
 }

@@ -235,3 +235,14 @@ table.t td.r, table.t th.r { text-align: right; }
 
 .route-bar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
 .route-bar select { background: var(--panel-solid); color: var(--text); border: 1px solid var(--line-2); border-radius: 8px; height: 32px; padding: 0 6px; flex: 1; }
+
+.card .img canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
+.fatal { position: fixed; inset: 0; display: grid; place-items: center; padding: 20px; background: radial-gradient(circle at 50% 30%, #1a2327, #0d1214); }
+.fatal-card { max-width: 640px; background: var(--panel-solid); border: 1px solid var(--line-2); border-radius: 14px; padding: 22px 26px; box-shadow: var(--shadow); line-height: 1.55; }
+.fatal-card h1 { margin: 0 0 8px; font-size: 20px; color: var(--accent); }
+.fatal-card h2 { margin: 16px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+.fatal-card ol { padding-left: 20px; margin: 0; }
+.fatal-card li { margin: 6px 0; }
+.fatal-card code { background: rgba(255,255,255,.07); padding: 1px 5px; border-radius: 4px; }
+.fatal-card button { margin-top: 12px; height: 34px; padding: 0 14px; border-radius: 9px; border: 0; background: var(--accent); color: var(--accent-ink); font-weight: 600; cursor: pointer; }
+.fatal-note { color: var(--muted); font-size: 12px; }

@@ -27,6 +27,15 @@ Annahmen des Planers:
 - Teile-Limit 3000.
 - Einige Raid-Werte; sie sind in der App mit `*` markiert.
 
+## Browser
+
+Der Planer braucht **WebGL**. LibreWolf (und Firefox mit `webgl.disabled`) schalten es ab. Die Seite zeigt dann eine Anleitung:
+
+- **LibreWolf:** Einstellungen → LibreWolf → „Enable WebGL“ setzen, oder in `about:config` den Wert `webgl.disabled` auf `false` stellen.
+- **Danach** die Seite neu laden.
+
+„Resist Fingerprinting“ stört nicht. Höchstens der Screenshot-Knopf wird dann blockiert.
+
 ## Entwicklung
 
 ```bash

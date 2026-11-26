@@ -103,38 +103,75 @@ export const floorBoardsTex = () => boards([92, 89, 84], 14, 13, 2.0);
 /** Dark brown warehouse planks (frames, beams, doors). */
 export const darkPlanksTex = () => boards([70, 58, 48], 12, 9, 1.6, { split: true, warm: 4 });
 
-/** Dirty, smooth concrete with faint block courses (cinder parts). */
+/** Dark, dirty cast concrete with vertical run-off streaks (cinder walls, after concrete_dirty). */
 export const concreteTex = () =>
-  makeTex(11, 2.0, (g, s, r) => {
-    g.fillStyle = '#7d7b76';
+  makeTex(11, 3.0, (g, s, r) => {
+    g.fillStyle = 'rgb(115,107,98)';
     g.fillRect(0, 0, s, s);
-    stains(g, s, r, 40, '60,58,52', 0.35);
-    stains(g, s, r, 20, '170,166,158', 0.18);
-    stains(g, s, r, 10, '70,60,40', 0.15);
-    const bw = s / 4, bh = s / 10;
-    g.strokeStyle = 'rgba(30,30,28,0.22)';
-    g.lineWidth = 2;
-    for (let row = 0; row <= 10; row++) {
-      g.beginPath();
-      g.moveTo(0, row * bh);
-      g.lineTo(s, row * bh);
-      g.stroke();
-      const off = row % 2 ? bw / 2 : 0;
-      for (let col = 0; col <= 4; col++) {
-        g.beginPath();
-        g.moveTo(col * bw + off, row * bh);
-        g.lineTo(col * bw + off, (row + 1) * bh);
-        g.stroke();
-      }
-    }
-    // rain streaks
-    for (let i = 0; i < 70; i++) {
+    // large mottled patches, lighter and darker
+    stains(g, s, r, 55, '82,76,70', 0.45);
+    stains(g, s, r, 40, '150,142,132', 0.28);
+    stains(g, s, r, 12, '95,88,72', 0.3);
+    // vertical streaks of water run-off
+    for (let i = 0; i < 160; i++) {
       const x = r() * s;
-      g.fillStyle = `rgba(30,28,25,${0.03 + r() * 0.06})`;
-      g.fillRect(x, 0, 2 + r() * 5, s * (0.2 + r() * 0.8));
+      const y = r() * s * 0.6;
+      const h = s * (0.15 + r() * 0.8);
+      const dark = r() > 0.35;
+      g.fillStyle = dark ? `rgba(55,50,45,${0.05 + r() * 0.12})` : `rgba(175,168,158,${0.04 + r() * 0.08})`;
+      g.fillRect(x, y, 1 + r() * 4, h);
     }
-    noise(g, s, r, 26000, 0.22);
-    noise(g, s, r, 8000, 0.12, true);
+    // thin cracks
+    g.strokeStyle = 'rgba(35,32,30,0.55)';
+    for (let i = 0; i < 10; i++) {
+      let x = r() * s, y = r() * s;
+      g.lineWidth = 0.6 + r() * 0.8;
+      g.beginPath();
+      g.moveTo(x, y);
+      for (let k = 0; k < 6; k++) {
+        x += (r() - 0.5) * 18;
+        y += 6 + r() * 16;
+        g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+    // horizontal formwork lines, very faint
+    for (let y = s / 6; y < s; y += s / 6) {
+      g.fillStyle = 'rgba(45,42,38,0.12)';
+      g.fillRect(0, y + (r() - 0.5) * 4, s, 2);
+    }
+    noise(g, s, r, 30000, 0.22);
+    noise(g, s, r, 12000, 0.1, true);
+  });
+
+/** Light, speckled bare concrete (edges and caps, after concrete_bare2). */
+export const concreteBareTex = () =>
+  makeTex(17, 1.5, (g, s, r) => {
+    g.fillStyle = 'rgb(160,160,151)';
+    g.fillRect(0, 0, s, s);
+    stains(g, s, r, 30, '135,135,126', 0.3);
+    stains(g, s, r, 20, '185,185,176', 0.2);
+    for (let i = 0; i < 9000; i++) {
+      const v = r() > 0.5 ? 70 : 205;
+      g.fillStyle = `rgba(${v},${v},${v - 6},${0.15 + r() * 0.35})`;
+      const d = 1 + r() * 2.2;
+      g.fillRect(r() * s, r() * s, d, d);
+    }
+  });
+
+/** Dark grey metal with orange rust (cinder door leaves, after metal_grey_rusty). */
+export const rustyMetalTex = () =>
+  makeTex(19, 2.0, (g, s, r) => {
+    g.fillStyle = 'rgb(92,90,92)';
+    g.fillRect(0, 0, s, s);
+    stains(g, s, r, 40, '70,70,76', 0.4);
+    stains(g, s, r, 45, '140,80,40', 0.32);
+    stains(g, s, r, 20, '170,105,55', 0.22);
+    for (let i = 0; i < 260; i++) {
+      g.fillStyle = `rgba(${150 + r() * 50},${80 + r() * 40},${40 + r() * 20},${0.15 + r() * 0.35})`;
+      g.fillRect(r() * s, r() * s, 2 + r() * 18, 1 + r() * 3);
+    }
+    noise(g, s, r, 16000, 0.2);
   });
 
 /** Diamond tread plate (metal floors). */

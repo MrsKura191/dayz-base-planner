@@ -4,7 +4,7 @@ import { GRID, LEVEL_H, SLAB, WALL_H } from './constants';
 import { PARTS, type PartDef, type Opening } from './data';
 import { shapeVerts } from './shapes';
 import {
-  barkTex, burlapTex, concreteTex, darkPlanksTex, floorBoardsTex, greyBoardsTex, metalPanelTex, netTex, treadPlateTex,
+  barkTex, burlapTex, concreteBareTex, concreteTex, darkPlanksTex, rustyMetalTex, floorBoardsTex, greyBoardsTex, metalPanelTex, netTex, treadPlateTex,
 } from './textures';
 
 // ------------------------------------------------------------------ materials
@@ -15,6 +15,8 @@ export const MAT = {
   woodFrame: std({ map: darkPlanksTex() }),
   woodFloor: std({ map: floorBoardsTex() }),
   cinder: std({ map: concreteTex(), roughness: 0.95 }),
+  cinderEdge: std({ map: concreteBareTex(), roughness: 0.95 }),
+  rusty: std({ map: rustyMetalTex(), metalness: 0.45, roughness: 0.7 }),
   metal: std({ map: metalPanelTex(), metalness: 0.4, roughness: 0.65 }),
   metalFloor: std({ map: treadPlateTex(), metalness: 0.5, roughness: 0.55 }),
   metalDark: std({ color: 0x3a3d3f, metalness: 0.55, roughness: 0.55 }),
@@ -40,7 +42,7 @@ function colorMat(color: string) {
 
 function lookMats(def: PartDef) {
   switch (def.look) {
-    case 'cinder': return { main: MAT.cinder, frame: MAT.metalDark, leaf: MAT.metal, floor: MAT.cinder };
+    case 'cinder': return { main: MAT.cinder, frame: MAT.cinderEdge, leaf: MAT.rusty, floor: MAT.cinder };
     case 'metal': return { main: MAT.metal, frame: MAT.metalDark, leaf: MAT.metalFloor, floor: MAT.metalFloor };
     case 'log': return { main: MAT.log, frame: MAT.log, leaf: MAT.log, floor: MAT.log };
     default: return { main: MAT.wood, frame: MAT.woodFrame, leaf: MAT.woodFrame, floor: MAT.woodFloor };
@@ -92,7 +94,7 @@ function mesh(parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Mate
 const box = (p: THREE.Object3D, mat: THREE.Material, w: number, h: number, d: number, x: number, y: number, z: number, o?: BoxOpts) =>
   mesh(p, meterBox(w, h, d), mat, x, y, z, o);
 
-type DoorMode = 'hinge' | 'hingeR' | 'hatch' | 'roller';
+type DoorMode = 'hinge' | 'hingeR' | 'hatch' | 'roller' | 'tilt';
 function pivot(parent: THREE.Object3D, mode: DoorMode, x: number, y: number, z: number, h = 0) {
   const p = new THREE.Group();
   p.position.set(x, y, z);
@@ -109,7 +111,7 @@ interface OpeningSpec {
   w: number;
   h: number;
   glass?: boolean;
-  leaf?: 'hinge' | 'double' | 'roller';
+  leaf?: 'hinge' | 'double' | 'roller' | 'tilt';
 }
 
 const WINDOW: OpeningSpec = { x: 0, y: 0.97, w: 1.96, h: 1.35 };
@@ -122,7 +124,8 @@ function openingSpec(op: Opening, def: PartDef, W: number, H: number): OpeningSp
     case 'glass': return { x: 0, y: 0.15, w: W - 0.3, h: H - 0.32, glass: true };
     case 'door': return { x: 0, y: 0, w: 1.28, h: 2.25, leaf: 'hinge' };
     case 'smalldoor': return { x: 0, y: 0, w: 1.28, h: 2.25, leaf: 'hinge' };
-    case 'garage': return cinder ? { x: 0, y: 0, w: 3.1, h: 2.56, leaf: 'double' } : { x: 0, y: 0, w: W - 0.3, h: 2.75, leaf: 'double' };
+    // garage doors tilt up on a hinge at the top of the opening (single leaf "door1" in the model)
+    case 'garage': return cinder ? { x: 0, y: 0, w: 3.1, h: 2.56, leaf: 'tilt' } : { x: 0, y: 0, w: W - 0.3, h: 2.75, leaf: 'tilt' };
     case 'shutter': return cinder ? { x: 0, y: 0, w: 3.5, h: 2.3, leaf: 'roller' } : { x: 0, y: 0, w: W - 0.3, h: 2.75, leaf: 'roller' };
     case 'hangar': return { x: 0, y: 0, w: 7.62, h: 5.5, leaf: 'double' };
     case 'hangarshutter': return { x: 0, y: 0, w: 7.62, h: 5.5, leaf: 'roller' };
@@ -151,6 +154,12 @@ function buildLeaves(g: THREE.Object3D, op: OpeningSpec, T: number, leafMat: THR
       box(p, leafMat, hw - 0.02, op.h - 0.03, lt, cx, op.h / 2, 0);
       for (const t of [0.12, 0.5, 0.88]) box(p, frameMat, hw - 0.1, 0.12, lt + 0.03, cx, op.h * t, 0);
     }
+  } else if (op.leaf === 'tilt') {
+    const p = pivot(g, 'tilt', op.x, op.y + op.h, 0);
+    box(p, leafMat, op.w - 0.04, op.h - 0.03, lt, 0, -op.h / 2, 0);
+    for (const t of [0.12, 0.5, 0.88]) box(p, frameMat, op.w - 0.1, 0.12, lt + 0.03, 0, -op.h * t, 0);
+    for (const x of [-0.3, 0, 0.3]) box(p, frameMat, 0.1, op.h - 0.1, lt + 0.02, x * op.w, -op.h / 2, 0);
+    box(p, MAT.metalDark, 0.3, 0.05, lt + 0.1, 0, -op.h + 0.25, 0);
   } else if (op.leaf === 'roller') {
     const p = pivot(g, 'roller', op.x, op.y, 0, op.h);
     box(p, MAT.metal, op.w - 0.04, op.h - 0.02, lt, 0, op.h / 2, 0);
@@ -206,7 +215,9 @@ function buildWall(def: PartDef) {
     }
     for (const [a, b] of segs) box(g, m.frame, b - a, 0.15, ft, (a + b) / 2, 0.075, 0);
   } else if (def.look === 'cinder') {
-    box(g, MAT.metalDark, W, 0.05, T + 0.03, 0, H - 0.025, 0, { noCollide: true });
+    box(g, MAT.cinderEdge, W, 0.08, T + 0.03, 0, H - 0.04, 0, { noCollide: true });
+    box(g, MAT.cinderEdge, 0.12, H, T + 0.02, -W / 2 + 0.06, H / 2, 0, { noCollide: true });
+    box(g, MAT.cinderEdge, 0.12, H, T + 0.02, W / 2 - 0.06, H / 2, 0, { noCollide: true });
   }
   return g;
 }
@@ -375,28 +386,134 @@ function buildObject(def: PartDef) {
   const m = lookMats(def);
   switch (def.style) {
     case 'workbench': {
-      box(g, MAT.woodFrame, w, 0.08, d, 0, h - 0.04, 0);
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, MAT.woodFrame, 0.1, h - 0.08, 0.1, sx * (w / 2 - 0.08), (h - 0.08) / 2, sz * (d / 2 - 0.08));
-      box(g, MAT.wood, w - 0.2, 0.05, d - 0.2, 0, 0.25, 0, { noCollide: true });
-      box(g, MAT.metalDark, 0.25, 0.18, 0.2, w / 2 - 0.25, h + 0.09, -d / 2 + 0.15, { noCollide: true });
-      box(g, MAT.wood, w, 0.9, 0.05, 0, h + 0.45, -d / 2 + 0.02, { noCollide: true });
+      // dark metal bench with red accents and a tool board (Workbench model ~2.37 x 1.6 x 0.85)
+      const steel = colorMat('#41332a');
+      const red = colorMat('#7a2a24');
+      box(g, colorMat('#5a4a3c'), w, 0.07, d, 0, h - 0.035, 0);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, steel, 0.08, h - 0.07, 0.08, sx * (w / 2 - 0.06), (h - 0.07) / 2, sz * (d / 2 - 0.06));
+      box(g, steel, w - 0.12, 0.04, d - 0.12, 0, 0.18, 0, { noCollide: true });
+      box(g, red, 0.62, h * 0.55, d - 0.1, w / 2 - 0.36, h * 0.48, 0, { noCollide: true });
+      for (const y of [0.3, 0.5, 0.7]) box(g, MAT.metalDark, 0.5, 0.03, 0.02, w / 2 - 0.36, h * y, d / 2 - 0.04, { noCollide: true });
+      box(g, steel, w, 0.7, 0.04, 0, h + 0.35, -d / 2 + 0.02, { noCollide: true });
+      for (let i = 0; i < 9; i++) box(g, MAT.metalDark, 0.05, 0.22, 0.03, -w / 2 + 0.3 + i * 0.18, h + 0.4, -d / 2 + 0.06, { noCollide: true });
+      box(g, MAT.metalDark, 0.25, 0.18, 0.2, -w / 2 + 0.25, h + 0.09, d / 2 - 0.15, { noCollide: true });
       break;
     }
     case 'storage': {
-      box(g, MAT.woodFrame, w, 0.1, d, 0, 0.05, 0);
-      for (const sx of [-1, 1]) box(g, MAT.woodFrame, 0.12, h, d, sx * (w / 2 - 0.06), h / 2, 0);
-      const lg = meterCylinder(0.14, w - 0.3, 9);
+      // maroon painted log rack (woodstorage texture)
+      const frame = colorMat(def.color ?? '#6b3b37');
+      box(g, frame, w, 0.1, d, 0, 0.05, 0);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, frame, 0.1, h, 0.1, sx * (w / 2 - 0.05), h / 2, sz * (d / 2 - 0.05));
+      box(g, frame, w, 0.08, 0.1, 0, h - 0.04, d / 2 - 0.05);
+      box(g, frame, w, 0.08, 0.1, 0, h - 0.04, -d / 2 + 0.05);
+      box(g, colorMat('#5c3330'), w - 0.2, 0.6, 0.03, 0, h - 0.4, -d / 2 + 0.03, { noCollide: true });
+      const lg = meterCylinder(0.13, w - 0.25, 9);
       for (let row = 0; row < 4; row++) {
         for (let i = 0; i < 3; i++) {
-          const l = mesh(g, lg, MAT.log, 0, 0.25 + row * 0.27, -d / 2 + 0.2 + i * 0.3, { noCollide: true });
+          const l = mesh(g, lg, MAT.log, 0, 0.24 + row * 0.25, -d / 2 + 0.25 + i * 0.32, { noCollide: true });
           l.rotation.z = Math.PI / 2;
         }
       }
       break;
     }
     case 'sign': {
-      box(g, MAT.woodFrame, 0.08, h, 0.08, 0, h / 2, 0);
-      box(g, MAT.wood, w, 0.45, 0.05, 0, h - 0.25, 0.06);
+      // small plate (0.68 x 0.26 m) on two short legs
+      box(g, MAT.woodFrame, w, h, d, 0, h / 2 + 0.06, 0);
+      for (const sx of [-1, 1]) box(g, MAT.metalDark, 0.03, 0.08, 0.03, sx * (w / 2 - 0.08), 0.04, 0, { noCollide: true });
+      break;
+    }
+    case 'case': {
+      // hard plastic case: ribs, latches, handle
+      const body = colorMat(def.color ?? '#353536');
+      const lid = colorMat('#2b2b2c');
+      box(g, body, w, h * 0.62, d, 0, h * 0.31, 0);
+      box(g, lid, w - 0.02, h * 0.36, d - 0.02, 0, h * 0.62 + h * 0.18, 0);
+      box(g, colorMat('#1f1f20'), w + 0.01, 0.025, d + 0.01, 0, h * 0.62, 0, { noCollide: true });
+      for (const t of [-0.3, 0.3]) box(g, MAT.metalDark, 0.08, 0.1, 0.03, t * w, h * 0.62, d / 2 + 0.01, { noCollide: true });
+      box(g, colorMat('#202021'), Math.min(0.3, w * 0.3), 0.04, 0.05, 0, h * 0.45, d / 2 + 0.03, { noCollide: true });
+      for (const t of [-0.42, 0.42]) box(g, lid, 0.04, h * 0.3, d + 0.02, t * w, h * 0.8, 0, { noCollide: true });
+      break;
+    }
+    case 'medic': {
+      const body = colorMat(def.color ?? '#bcab88');
+      box(g, body, w, h * 0.62, d, 0, h * 0.31, 0);
+      box(g, colorMat('#c9b994'), w - 0.02, h * 0.36, d - 0.02, 0, h * 0.8, 0);
+      const red = colorMat('#b3262a');
+      box(g, red, 0.22, 0.012, 0.07, 0, h + 0.006, 0, { noCollide: true });
+      box(g, red, 0.07, 0.012, 0.22, 0, h + 0.006, 0, { noCollide: true });
+      for (const t of [-0.3, 0.3]) box(g, MAT.metalDark, 0.07, 0.08, 0.03, t * w, h * 0.62, d / 2 + 0.01, { noCollide: true });
+      break;
+    }
+    case 'shelf': {
+      // open dark metal shelving, four boards
+      const steel = colorMat(def.color ?? '#2f2e2e');
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, steel, 0.04, h, 0.04, sx * (w / 2 - 0.02), h / 2, sz * (d / 2 - 0.02));
+      for (const t of [0.05, 0.36, 0.67, 0.97]) box(g, steel, w, 0.03, d, 0, h * t, 0);
+      box(g, colorMat('#262525'), w, h, 0.02, 0, h / 2, -d / 2 + 0.01, { noCollide: true });
+      break;
+    }
+    case 'dresser': {
+      const wood = colorMat(def.color ?? '#86593e');
+      box(g, wood, w, h, d, 0, h / 2, 0);
+      box(g, colorMat('#7a4f36'), w + 0.04, 0.04, d + 0.03, 0, h + 0.02, 0);
+      for (let i = 0; i < 4; i++) {
+        const y = 0.12 + i * ((h - 0.2) / 4) + (h - 0.2) / 8;
+        box(g, colorMat('#9a6a4a'), w - 0.08, (h - 0.2) / 4 - 0.03, 0.02, 0, y, d / 2 + 0.01, { noCollide: true });
+        for (const t of [-0.25, 0.25]) box(g, MAT.metalDark, 0.05, 0.03, 0.03, t * w, y, d / 2 + 0.03, { noCollide: true });
+      }
+      break;
+    }
+    case 'toolchest': {
+      // red tool chest: drawer stack with a top box
+      const red = colorMat(def.color ?? '#53231e');
+      const redL = colorMat('#7d2f27');
+      box(g, red, w, h * 0.72, d, 0, h * 0.36, 0);
+      box(g, red, w - 0.04, h * 0.27, d - 0.06, 0, h * 0.72 + h * 0.135, -0.02);
+      const n = 6;
+      for (let i = 0; i < n; i++) {
+        const y = 0.06 + i * ((h * 0.72 - 0.08) / n) + (h * 0.72 - 0.08) / (2 * n);
+        box(g, redL, w - 0.08, (h * 0.72 - 0.08) / n - 0.025, 0.02, 0, y, d / 2 + 0.01, { noCollide: true });
+        box(g, colorMat('#b8b8b4'), w * 0.5, 0.02, 0.03, 0, y + 0.02, d / 2 + 0.03, { noCollide: true });
+      }
+      break;
+    }
+    case 'fridge': {
+      const white = colorMat(def.color ?? '#cfd0cf');
+      box(g, white, w, h, d, 0, h / 2, 0);
+      box(g, colorMat('#bdbebd'), w / 2 - 0.02, h - 0.06, 0.03, -w / 4, h / 2, d / 2 + 0.015, { noCollide: true });
+      box(g, colorMat('#c4c5c4'), w / 2 - 0.02, h - 0.06, 0.03, w / 4, h / 2, d / 2 + 0.015, { noCollide: true });
+      for (const sx of [-1, 1]) box(g, MAT.metalDark, 0.03, 0.5, 0.04, sx * 0.05, h * 0.6, d / 2 + 0.05, { noCollide: true });
+      box(g, colorMat('#6d6f70'), w * 0.8, 0.08, 0.02, 0, 0.08, d / 2 + 0.012, { noCollide: true });
+      break;
+    }
+    case 'gunrack':
+    case 'locker': {
+      // metal cabinet: doors, vents, handles; wide ones get double doors
+      const body = colorMat(def.color ?? '#3d3d3d');
+      const door = colorMat(def.id === 'gun_cabinet' ? '#5e6f7b' : def.id === 'rifle_locker' ? '#647050' : '#4a4a4a');
+      box(g, body, w, h, d, 0, h / 2, 0);
+      const doors = w > 0.6 ? 2 : 1;
+      const dw = (w - 0.06) / doors;
+      for (let i = 0; i < doors; i++) {
+        const x = -w / 2 + 0.03 + dw * (i + 0.5);
+        box(g, door, dw - 0.02, h - 0.08, 0.02, x, h / 2, d / 2 + 0.01, { noCollide: true });
+        for (let v = 0; v < 4; v++) box(g, colorMat('#262626'), dw * 0.5, 0.015, 0.025, x, h - 0.18 - v * 0.04, d / 2 + 0.02, { noCollide: true });
+        const hx = doors === 2 ? (i === 0 ? dw / 2 - 0.06 : -dw / 2 + 0.06) : dw / 2 - 0.06;
+        box(g, MAT.metalDark, 0.03, 0.18, 0.04, x + hx, h * 0.52, d / 2 + 0.04, { noCollide: true });
+      }
+      break;
+    }
+    case 'arcade': {
+      const body = colorMat(def.color ?? '#1c1c22');
+      box(g, body, w, h * 0.42, d, 0, h * 0.21, 0);
+      box(g, body, w, h * 0.58, d * 0.62, 0, h * 0.42 + h * 0.29, -d * 0.19);
+      box(g, colorMat('#2a2a34'), w, 0.06, d * 0.55, 0, h * 0.45, d * 0.2);
+      const screen = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.72, h * 0.24), new THREE.MeshBasicMaterial({ color: 0x5b2a8a }));
+      screen.position.set(0, h * 0.72, d * 0.12 + 0.005);
+      screen.userData.noCollide = true;
+      g.add(screen);
+      box(g, colorMat('#b5262e'), w, h * 0.1, d * 0.62, 0, h * 0.95, -d * 0.19, { noCollide: true });
+      for (const x of [-0.15, 0.15]) mesh(g, new THREE.CylinderGeometry(0.03, 0.03, 0.03, 10), colorMat('#c43a3a'), x * w, h * 0.49, d * 0.25, { noCollide: true });
       break;
     }
     case 'greenhouse': {
@@ -416,15 +533,15 @@ function buildObject(def: PartDef) {
     case 'shed': {
       const t = 0.12;
       box(g, MAT.woodFloor, w, 0.12, d, 0, 0.06, 0);
-      box(g, MAT.wood, w, h, t, 0, h / 2, -d / 2 + t / 2);
-      for (const sx of [-1, 1]) box(g, MAT.wood, t, h, d, sx * (w / 2 - t / 2), h / 2, 0);
+      box(g, MAT.woodFrame, w, h, t, 0, h / 2, -d / 2 + t / 2);
+      for (const sx of [-1, 1]) box(g, MAT.woodFrame, t, h, d, sx * (w / 2 - t / 2), h / 2, 0);
       const dw = 1.2;
       const side = (w - dw) / 2;
-      box(g, MAT.wood, side, h, t, -w / 2 + side / 2, h / 2, d / 2 - t / 2);
-      box(g, MAT.wood, side, h, t, w / 2 - side / 2, h / 2, d / 2 - t / 2);
-      box(g, MAT.wood, dw, h - 2.1, t, 0, 2.1 + (h - 2.1) / 2, d / 2 - t / 2);
+      box(g, MAT.woodFrame, side, h, t, -w / 2 + side / 2, h / 2, d / 2 - t / 2);
+      box(g, MAT.woodFrame, side, h, t, w / 2 - side / 2, h / 2, d / 2 - t / 2);
+      box(g, MAT.woodFrame, dw, h - 2.1, t, 0, 2.1 + (h - 2.1) / 2, d / 2 - t / 2);
       const p = pivot(g, 'hinge', -dw / 2, 0.12, d / 2 - t / 2);
-      box(p, MAT.wood, dw - 0.03, 1.95, 0.07, dw / 2, 0.98, 0);
+      box(p, MAT.woodFrame, dw - 0.03, 1.95, 0.07, dw / 2, 0.98, 0);
       box(g, MAT.metal, w + 0.3, 0.06, d + 0.4, 0, h + 0.1, 0, { rx: 0.12 });
       break;
     }
@@ -627,6 +744,7 @@ export function stepDoor(p: THREE.Object3D, dt: number): boolean {
     case 'hinge': p.rotation.y = -d.t * 1.7; break;
     case 'hingeR': p.rotation.y = d.t * 1.7; break;
     case 'hatch': p.rotation.x = -d.t * 1.8; break;
+    case 'tilt': p.rotation.x = -d.t * 1.48; break;
     case 'roller':
       p.position.y = d.baseY + d.t * d.h * 0.92;
       p.scale.y = 1 - d.t * 0.92;
