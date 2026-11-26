@@ -1,0 +1,626 @@
+import './style.css';
+import { DATA_AS_OF, DEFAULT_PART_LIMIT, MAX_LEVEL, WIKI_URL } from './constants';
+import { CATEGORIES, PART_ORDER, PARTS, type Category } from './data';
+import { Editor } from './editor';
+import { I } from './icons';
+import { costLine, esc, levelName, renderMaterials, renderMeters, renderPhases, renderRaid, renderUpkeep, shoppingText } from './panels';
+import {
+  currentDesignId, decodeShare, deleteDesign, encodeShare, listDesigns, loadSettings, newId, sanitize, saveDesign, saveSettings,
+  strip, type Design, type Settings,
+} from './persist';
+import { Store } from './store';
+import { renderThumbs } from './thumbs';
+import { WalkMode } from './walk';
+
+// ------------------------------------------------------------------ layout
+const app = document.getElementById('app')!;
+app.innerHTML = `
+<div class="stage">
+  <div id="viewport"></div>
+
+  <div class="float topleft">
+    <div class="brand">${I.logo}<div><b>Basis-Planer</b><small>für Aftermath · inoffiziell</small></div></div>
+    <div class="rel"><button class="btn" id="designsBtn">${I.folder} Pläne ${I.chevron}</button><div class="menu" id="designsMenu" hidden></div></div>
+    <input class="design-name" id="designName" maxlength="60" spellcheck="false">
+    <span class="save-state" id="saveState">Gespeichert</span>
+  </div>
+
+  <div class="float toolbar">
+    <button class="tb" id="tbUndo" data-tip="Rückgängig (Strg+Z)">${I.undo}</button>
+    <button class="tb" id="tbRedo" data-tip="Wiederholen (Strg+Y)">${I.redo}</button>
+    <span class="tb-sep"></span>
+    <button class="tb on" id="tbSnap" data-tip="Einrasten an/aus (X)">${I.magnet}</button>
+    <button class="tb" id="tbWalk" data-tip="Durch die Basis laufen (V)">${I.walk}</button>
+    <button class="tb" id="tbFrame" data-tip="Ganze Basis zeigen (F)">${I.frame}</button>
+    <button class="tb on" id="tbTerritory" data-tip="Territorium anzeigen (T)">${I.territory}</button>
+    <span class="tb-sep"></span>
+    <button class="tb" id="tbShot" data-tip="Screenshot speichern">${I.camera}</button>
+    <button class="tb" id="tbShare" data-tip="Teilen-Link kopieren">${I.share}</button>
+    <button class="tb" id="tbHelp" data-tip="Hilfe & Tastatur (?)">${I.help}</button>
+    <button class="tb on" id="tbPanel" data-tip="Seitenleiste ein/aus">${I.panel}</button>
+  </div>
+
+  <div class="float levels" id="levels"></div>
+
+  <aside class="float panel" id="panel">
+    <div class="tabs">
+      <button class="tab on" data-tab="mat">Material</button>
+      <button class="tab" data-tab="phase">Ebenen</button>
+      <button class="tab" data-tab="upkeep">Unterhalt</button>
+      <button class="tab" data-tab="raid">Raid</button>
+    </div>
+    <div class="panel-body"><div id="meters"></div><div id="tabBody"></div></div>
+    <div class="foot">Daten: <a href="${WIKI_URL}" target="_blank" rel="noopener">Aftermath-Wiki</a>, Stand ${DATA_AS_OF} · inoffizielles Fan-Tool</div>
+  </aside>
+
+  <div class="float status" id="status" hidden></div>
+  <div class="float selcard" id="selcard" hidden></div>
+
+  <div id="walkLayer" hidden>
+    <div class="crosshair"></div>
+    <div class="walkhint" id="walkHint" hidden></div>
+    <div class="float walkcta" id="walkCta"><b>Klicken zum Umsehen</b><span style="color:var(--muted)">Esc gibt die Maus frei, nochmal Esc beendet</span></div>
+    <div class="float walkhud" id="walkHud"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <div class="help-wrap" id="help" hidden></div>
+  <input type="file" id="importFile" accept=".json,application/json" hidden>
+</div>
+<footer class="catalog" id="catalog">
+  <div class="cat-head" id="catHead"></div>
+  <div class="cards" id="cards"></div>
+</footer>`;
+
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+
+// ------------------------------------------------------------------- state
+const store = new Store();
+let settings: Settings = loadSettings({
+  upkeepPrices: {}, partLimit: DEFAULT_PART_LIMIT, rawNails: false, rawSheet: false, rawPlanks: false,
+});
+let design: Design = { id: newId(), name: 'Meine Basis', updated: Date.now(), pieces: [] };
+let tab: 'mat' | 'phase' | 'upkeep' | 'raid' = 'mat';
+let catTab: Category = 'wood';
+let search = '';
+const thumbs = new Map<string, string>();
+
+const editor = new Editor($('viewport'), store, {
+  onPreview: () => renderStatus(),
+  onSelect: () => renderSelection(),
+});
+editor.partLimit = settings.partLimit;
+if (import.meta.env.DEV) Object.assign(window, { __ed: editor, __store: store });
+
+// --------------------------------------------------------------- walk HUD
+const walk = new WalkMode(
+  editor,
+  {
+    show(v) {
+      $('walkLayer').hidden = !v;
+      $('catalog').style.display = v ? 'none' : '';
+      for (const id of ['panel', 'levels', 'status', 'selcard']) $(id).style.visibility = v ? 'hidden' : '';
+      document.querySelector<HTMLElement>('.toolbar')!.style.visibility = v ? 'hidden' : '';
+      document.querySelector<HTMLElement>('.topleft')!.style.visibility = v ? 'hidden' : '';
+    },
+    update(s) {
+      $('walkCta').hidden = s.locked;
+      const hint = $('walkHint');
+      hint.hidden = !s.hint;
+      hint.textContent = s.hint ?? '';
+      const st = { stand: 'Stehend', crouch: 'Geduckt', prone: 'Liegend' }[s.stance];
+      $('walkHud').innerHTML = `
+        <span class="pill on">${I.walk.replace('<svg', '<svg width="14" height="14"')} Laufmodus</span>
+        <span class="pill">${st}</span>
+        <span class="pill ${s.noclip ? 'on' : ''}">No-Clip ${s.noclip ? 'an' : 'aus'}</span>
+        <span class="k"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> gehen · <kbd>Shift</kbd> rennen · <kbd>Leertaste</kbd> springen ·
+        <kbd>C</kbd> ducken · <kbd>Z</kbd> hinlegen · <kbd>F</kbd> Tür · <kbd>N</kbd> No-Clip · <kbd>Esc</kbd> beenden</span>
+        <button class="btn" id="walkExit">Beenden</button>`;
+      $('walkExit').onclick = () => walk.exit();
+    },
+  },
+  () => renderToolbar(),
+);
+
+if (import.meta.env.DEV) Object.assign(window, { __walk: walk });
+
+// ----------------------------------------------------------------- helpers
+let toastTimer = 0;
+function toast(msg: string) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+function download(name: string, href: string) {
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = name;
+  a.click();
+}
+
+const fileSafe = (s: string) => s.replace(/[^\w\-äöüÄÖÜß ]+/g, '').trim().replace(/\s+/g, '-') || 'basis';
+
+// --------------------------------------------------------------- designs
+let saveTimer = 0;
+function markDirty() {
+  $('saveState').textContent = 'Speichert …';
+  $('saveState').classList.add('dirty');
+  clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(persistNow, 500);
+}
+
+function persistNow() {
+  design.pieces = strip(store.all());
+  design.name = ($('designName') as HTMLInputElement).value.trim() || 'Unbenannt';
+  design.updated = Date.now();
+  try {
+    saveDesign(design);
+    const t = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    $('saveState').textContent = `Gespeichert ${t}`;
+    $('saveState').classList.remove('dirty');
+  } catch {
+    $('saveState').textContent = 'Speichern fehlgeschlagen';
+  }
+}
+
+function openDesign(d: Design) {
+  clearTimeout(saveTimer);
+  design = d;
+  ($('designName') as HTMLInputElement).value = d.name;
+  store.load(d.pieces);
+  editor.setActivePart(null);
+  editor.frameAll();
+  saveDesign(design);
+  $('saveState').textContent = 'Gespeichert';
+  $('saveState').classList.remove('dirty');
+  renderAll();
+}
+
+function renderDesignsMenu() {
+  const list = listDesigns();
+  const m = $('designsMenu');
+  m.innerHTML = `
+    <h6>Deine Pläne</h6>
+    ${list
+      .map((d) => `<button class="menu-item ${d.id === design.id ? 'current' : ''}" data-open="${d.id}">${I.folder}<span>${esc(d.name)}</span><small>${d.pieces.length} Teile</small></button>`)
+      .join('') || '<div class="info" style="padding:0 8px">Noch keine.</div>'}
+    <hr>
+    <button class="menu-item" data-act="new">${I.plus}<span>Neuer Plan</span></button>
+    <button class="menu-item" data-act="dup">${I.copy}<span>Plan duplizieren</span></button>
+    <button class="menu-item" data-act="export">${I.download}<span>Als Datei exportieren (.json)</span></button>
+    <button class="menu-item" data-act="import">${I.upload}<span>Datei importieren</span></button>
+    <button class="menu-item" data-act="clear">${I.trash}<span>Alle Teile entfernen</span></button>
+    <button class="menu-item" data-act="delete">${I.trash}<span>Plan löschen</span></button>`;
+}
+
+$('designsBtn').onclick = (e) => {
+  e.stopPropagation();
+  const m = $('designsMenu');
+  if (m.hidden) renderDesignsMenu();
+  m.hidden = !m.hidden;
+};
+document.addEventListener('click', (e) => {
+  if (!(e.target as HTMLElement).closest('#designsMenu')) $('designsMenu').hidden = true;
+});
+$('designsMenu').onclick = (e) => {
+  const b = (e.target as HTMLElement).closest('button');
+  if (!b) return;
+  persistNow();
+  const open = b.dataset.open;
+  if (open) {
+    const d = listDesigns().find((x) => x.id === open);
+    if (d) openDesign(d);
+  }
+  switch (b.dataset.act) {
+    case 'new':
+      openDesign({ id: newId(), name: 'Neue Basis', updated: Date.now(), pieces: [] });
+      break;
+    case 'dup':
+      openDesign({ ...design, id: newId(), name: design.name + ' (Kopie)', pieces: strip(store.all()) });
+      break;
+    case 'export': {
+      const blob = new Blob([JSON.stringify({ app: 'aftermath-base-planner', v: 1, name: design.name, pieces: strip(store.all()) }, null, 1)], { type: 'application/json' });
+      download(fileSafe(design.name) + '.json', URL.createObjectURL(blob));
+      break;
+    }
+    case 'import':
+      $('importFile').click();
+      break;
+    case 'clear':
+      if (store.pieces.size && confirm('Alle Teile dieses Plans entfernen? (Rückgängig mit Strg+Z möglich)')) store.clear();
+      break;
+    case 'delete':
+      if (confirm(`Plan „${design.name}“ endgültig löschen?`)) {
+        deleteDesign(design.id);
+        const next = listDesigns()[0];
+        openDesign(next ?? { id: newId(), name: 'Meine Basis', updated: Date.now(), pieces: [] });
+      }
+      break;
+  }
+  $('designsMenu').hidden = true;
+};
+
+($('importFile') as HTMLInputElement).onchange = async (e) => {
+  const f = (e.target as HTMLInputElement).files?.[0];
+  if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    const pieces = sanitize(data.pieces);
+    openDesign({ id: newId(), name: String(data.name ?? f.name.replace(/\.json$/, '')).slice(0, 60), updated: Date.now(), pieces });
+    toast(`${pieces.length} Teile importiert`);
+  } catch {
+    toast('Datei konnte nicht gelesen werden');
+  }
+  (e.target as HTMLInputElement).value = '';
+};
+
+$('designName').addEventListener('input', markDirty);
+
+// --------------------------------------------------------------- toolbar
+function renderToolbar() {
+  ($('tbUndo') as HTMLButtonElement).disabled = !store.canUndo();
+  ($('tbRedo') as HTMLButtonElement).disabled = !store.canRedo();
+  $('tbSnap').classList.toggle('on', editor.snap);
+  $('tbTerritory').classList.toggle('on', editor.showTerritory);
+  $('tbPanel').classList.toggle('on', !$('panel').classList.contains('collapsed'));
+}
+
+$('tbUndo').onclick = () => store.undo();
+$('tbRedo').onclick = () => store.redo();
+$('tbSnap').onclick = () => {
+  toast(editor.toggleSnap() ? 'Einrasten an' : 'Freie Platzierung');
+  renderToolbar();
+};
+$('tbWalk').onclick = () => startWalk();
+$('tbFrame').onclick = () => editor.frameAll();
+$('tbTerritory').onclick = () => {
+  editor.setTerritoryVisible(!editor.showTerritory);
+  renderToolbar();
+};
+$('tbShot').onclick = () => download(fileSafe(design.name) + '.png', editor.screenshot());
+$('tbShare').onclick = () => share();
+$('tbHelp').onclick = () => toggleHelp();
+$('tbPanel').onclick = () => {
+  $('panel').classList.toggle('collapsed');
+  renderToolbar();
+};
+
+function startWalk() {
+  if (!store.pieces.size) {
+    toast('Bau erst etwas, dann kannst du hindurchlaufen');
+    return;
+  }
+  walk.enter();
+}
+
+async function share() {
+  const code = await encodeShare(design.name, store.all());
+  const url = `${location.origin}${location.pathname}#plan=${code}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('Link kopiert – wer ihn öffnet, bekommt eine Kopie des Plans');
+  } catch {
+    prompt('Link zum Teilen:', url);
+  }
+}
+
+// ---------------------------------------------------------------- levels
+function renderLevels() {
+  const counts = new Array(MAX_LEVEL + 1).fill(0);
+  for (const p of store.pieces.values()) counts[p.l]++;
+  const btns = [];
+  for (let l = MAX_LEVEL; l >= 0; l--) {
+    btns.push(`<button class="lv ${editor.level === l ? 'active' : ''}" data-l="${l}" title="${levelName(l)} (Bild↑/Bild↓)">${l === 0 ? 'G' : l}${counts[l] ? `<span class="n">${counts[l]}</span>` : ''}</button>`);
+  }
+  $('levels').innerHTML = `<div class="title">Ebenen</div>${btns.join('')}
+    <button class="lv-all ${editor.showAll ? 'on' : ''}" id="lvAll" title="Ebenen über der aktiven ein-/ausblenden">${editor.showAll ? 'Alle sichtbar' : 'Bis hier'}</button>`;
+}
+
+$('levels').onclick = (e) => {
+  const b = (e.target as HTMLElement).closest('button');
+  if (!b) return;
+  if (b.id === 'lvAll') editor.setShowAll(!editor.showAll);
+  else {
+    editor.setLevel(Number(b.dataset.l));
+    if (editor.showAll && editor.level < MAX_LEVEL) editor.setShowAll(false);
+  }
+  renderLevels();
+};
+
+// ----------------------------------------------------------------- panel
+function renderPanel() {
+  const pieces = store.all();
+  $('meters').innerHTML = renderMeters(pieces, settings.partLimit);
+  const body = $('tabBody');
+  body.innerHTML =
+    tab === 'mat' ? renderMaterials(pieces, settings)
+    : tab === 'phase' ? renderPhases(pieces)
+    : tab === 'upkeep' ? renderUpkeep(pieces, settings)
+    : renderRaid(pieces);
+  document.querySelectorAll<HTMLElement>('.tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === tab));
+}
+
+document.querySelector('.tabs')!.addEventListener('click', (e) => {
+  const t = (e.target as HTMLElement).closest<HTMLElement>('.tab');
+  if (!t) return;
+  tab = t.dataset.tab as typeof tab;
+  renderPanel();
+});
+
+$('tabBody').addEventListener('change', (e) => {
+  const el = e.target as HTMLInputElement;
+  const opt = el.dataset.opt;
+  if (opt === 'rawNails' || opt === 'rawSheet') settings[opt] = el.checked;
+  if (opt === 'rawPlanks') settings.rawPlanks = (el.value || false) as Settings['rawPlanks'];
+  if (el.dataset.price) settings.upkeepPrices[el.dataset.price] = Math.max(0, Number(el.value) || 0);
+  saveSettings(settings);
+  renderPanel();
+});
+
+$('tabBody').addEventListener('click', async (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
+  if (b?.dataset.act === 'copy-list') {
+    const text = shoppingText(store.all(), settings, design.name);
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Einkaufsliste kopiert');
+    } catch {
+      prompt('Einkaufsliste:', text);
+    }
+  }
+});
+
+// ---------------------------------------------------------------- catalog
+function renderCatalogHead() {
+  $('catHead').innerHTML = `${CATEGORIES.map((c) => {
+    const n = PART_ORDER.filter((id) => PARTS[id].cat === c.id).length;
+    return `<button class="ctab ${!search && catTab === c.id ? 'on' : ''}" data-cat="${c.id}">${c.name}<small>${n}</small></button>`;
+  }).join('')}
+    <label class="search">${I.search.replace('<svg', '<svg width="15" height="15"')}<input id="search" placeholder="Teile suchen" value="${esc(search)}"></label>
+    <button class="tb cat-toggle" id="catToggle" title="Leiste ein-/ausklappen">${I.chevron}</button>`;
+  ($('search') as HTMLInputElement).oninput = (e) => {
+    search = (e.target as HTMLInputElement).value;
+    renderCards();
+    document.querySelectorAll('.ctab').forEach((t) => t.classList.toggle('on', !search && (t as HTMLElement).dataset.cat === catTab));
+  };
+  $('catToggle').onclick = () => $('catalog').classList.toggle('min');
+}
+
+function renderCards() {
+  const q = search.trim().toLowerCase();
+  const ids = PART_ORDER.filter((id) => (q ? PARTS[id].name.toLowerCase().includes(q) : PARTS[id].cat === catTab));
+  $('cards').innerHTML = ids
+    .map((id) => {
+      const d = PARTS[id];
+      const cost = costLine(id);
+      const img = thumbs.get(id);
+      return `<button class="card ${editor.activePart === id ? 'on' : ''}" data-part="${id}" title="${esc(d.name + (d.note ? ' – ' + d.note : ''))}">
+        <div class="img">${img ? `<img src="${img}" alt="">` : ''}</div>
+        <div class="nm">${esc(d.name)}</div>
+        <div class="cost ${cost ? '' : 'unknown'}">${esc(cost ?? 'Kosten nicht im Wiki')}</div></button>`;
+    })
+    .join('') || '<div class="info">Nichts gefunden.</div>';
+}
+
+$('catHead').addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLElement>('[data-cat]');
+  if (!b) return;
+  catTab = b.dataset.cat as Category;
+  search = '';
+  renderCatalogHead();
+  renderCards();
+});
+
+$('cards').addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLElement>('[data-part]');
+  if (!b) return;
+  const id = b.dataset.part!;
+  editor.setActivePart(editor.activePart === id ? null : id);
+  if (editor.activePart) {
+    const k = PARTS[id].kind;
+    if ((k === 'palisade' || k === 'plotpole') && editor.level !== 0) {
+      editor.setLevel(0);
+      renderLevels();
+    }
+  }
+  renderCards();
+  renderStatus();
+});
+
+// ------------------------------------------------------- status/selection
+function renderStatus() {
+  const s = $('status');
+  if (!editor.activePart) {
+    s.hidden = true;
+    return;
+  }
+  const d = PARTS[editor.activePart];
+  const v = editor.verdict;
+  const mode = editor.placement ? (editor.placement.snapped ? 'Eingerastet' : 'Frei') : d.kind === 'bars' ? 'Zeige auf ein Fenster' : 'Zeige auf die Fläche';
+  s.hidden = false;
+  s.innerHTML = `<b>${esc(d.name)}</b><span class="mode">${mode}</span>
+    ${v && !v.ok ? `<span class="bad">${esc(v.reason ?? '')}</span>` : ''}
+    <span class="k"><kbd>Klick</kbd> setzen · <kbd>Q</kbd><kbd>E</kbd> drehen · <kbd>X</kbd> Einrasten · <kbd>Rechtsklick</kbd>/<kbd>Esc</kbd> fertig</span>`;
+}
+
+function renderSelection() {
+  const c = $('selcard');
+  const id = editor.selected;
+  const p = id != null ? store.pieces.get(id) : null;
+  if (!p) {
+    c.hidden = true;
+    return;
+  }
+  const d = PARTS[p.t];
+  c.hidden = false;
+  c.innerHTML = `<div><div class="nm">${esc(d.name)}</div><div class="lv-tag">${levelName(p.l)}${costLine(p.t) ? ' · ' + esc(costLine(p.t)!) : ''}</div></div>
+    <button class="btn" id="selSame">${I.plus} Noch eins</button>
+    <button class="btn danger" id="selDel">${I.trash} Entfernen</button>`;
+  $('selSame').onclick = () => {
+    editor.setLevel(p.l);
+    editor.setActivePart(p.t);
+    renderLevels();
+    renderCards();
+    renderStatus();
+  };
+  $('selDel').onclick = () => editor.deleteSelected();
+}
+
+// ------------------------------------------------------------------ help
+function toggleHelp(force?: boolean) {
+  const h = $('help');
+  const show = force ?? h.hidden;
+  h.hidden = !show;
+  if (!show) return;
+  const row = (k: string, t: string) => `<div><span>${t}</span><span>${k}</span></div>`;
+  h.innerHTML = `<div class="float help" style="position:relative">
+    <button class="tb close" id="helpClose">${I.x}</button>
+    <h2>Basis-Planer für Aftermath</h2>
+    <p>Plane deine Basis außerhalb des Spiels, sieh sofort, was du an Material, Werkzeug, Unterhalt und Raid-Schutz brauchst, und lauf in der Ego-Perspektive hindurch.
+    Die Rezepte stammen aus dem öffentlichen <a href="${WIKI_URL}/base-building/building-recipes" target="_blank" rel="noopener">Aftermath-Wiki</a> (Stand ${DATA_AS_OF}).
+    Im Spiel zeigt die Werkbank immer die aktuellen Kosten.</p>
+    <h3>Bauen</h3>
+    <div class="grid">
+      ${row('<kbd>Klick</kbd>', 'Teil setzen / auswählen')}
+      ${row('<kbd>Q</kbd> <kbd>E</kbd>', 'Drehen bzw. Seite wechseln')}
+      ${row('<kbd>Shift</kbd>+<kbd>Q</kbd>/<kbd>E</kbd>', 'Frei: um 90° drehen')}
+      ${row('<kbd>X</kbd>', 'Einrasten an/aus')}
+      ${row('<kbd>Rechtsklick</kbd> / <kbd>Esc</kbd>', 'Bauen beenden')}
+      ${row('<kbd>Entf</kbd>', 'Auswahl entfernen')}
+      ${row('<kbd>Strg</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd>', 'Rückgängig / Wiederholen')}
+      ${row('<kbd>Bild↑</kbd> <kbd>Bild↓</kbd>', 'Ebene wechseln')}
+    </div>
+    <h3>Kamera</h3>
+    <div class="grid">
+      ${row('<kbd>Rechte Maus</kbd> ziehen', 'Drehen (ohne aktives Teil auch links)')}
+      ${row('<kbd>Mittlere Maus</kbd> ziehen', 'Verschieben')}
+      ${row('<kbd>Mausrad</kbd>', 'Zoomen')}
+      ${row('<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>', 'Kamera bewegen')}
+      ${row('<kbd>F</kbd>', 'Ganze Basis zeigen')}
+      ${row('<kbd>V</kbd>', 'Laufmodus')}
+      ${row('<kbd>T</kbd>', 'Territorium ein/aus')}
+    </div>
+    <h3>So rastet was ein</h3>
+    <p>Böden an Bodenkanten und auf Wänden der Ebene darunter, Wände und Türen an Bodenkanten, Halb- und Drittelwände übereinander, Treppen auf quadratische Böden,
+    Wendeltreppen übereinander, Palisaden an Palisaden, Fenstergitter an Fensterwänden. Möbel stehen frei auf jeder Fläche.</p>
+    <h3>Annahmen</h3>
+    <p>Das Wiki nennt keine Maße: der Planer nutzt ein 3-m-Raster und 3 m pro Ebene. Das Teile-Limit (${DEFAULT_PART_LIMIT}) und einige Raid-Werte (mit * markiert) sind geschätzt.
+    Unterhaltspreise trägst du selbst ein. Dieses Tool ist ein Fanprojekt und steht in keiner Verbindung zu Aftermath Gaming.</p>
+  </div>`;
+  $('helpClose').onclick = () => toggleHelp(false);
+}
+$('help').addEventListener('click', (e) => {
+  if (e.target === $('help')) toggleHelp(false);
+});
+
+// ------------------------------------------------------------- keyboard
+window.addEventListener('keydown', (e) => {
+  if (walk.active) return;
+  if ((e.target as HTMLElement)?.closest?.('input,textarea,select')) return;
+  const k = e.key.toLowerCase();
+  const ctrl = e.ctrlKey || e.metaKey;
+  if (ctrl && k === 'z') {
+    e.preventDefault();
+    e.shiftKey ? store.redo() : store.undo();
+    return;
+  }
+  if (ctrl && k === 'y') {
+    e.preventDefault();
+    store.redo();
+    return;
+  }
+  if (ctrl) return;
+  switch (k) {
+    case 'escape':
+      if (!$('help').hidden) toggleHelp(false);
+      else if (editor.activePart) editor.setActivePart(null);
+      else editor.select(null);
+      renderCards();
+      renderStatus();
+      break;
+    case 'q':
+      editor.rotate(-1, e.shiftKey);
+      break;
+    case 'e':
+    case 'r':
+      editor.rotate(1, e.shiftKey);
+      break;
+    case 'x':
+      $('tbSnap').click();
+      break;
+    case 'delete':
+    case 'backspace':
+      editor.deleteSelected();
+      break;
+    case 'pageup':
+      e.preventDefault();
+      editor.setLevel(editor.level + 1);
+      renderLevels();
+      break;
+    case 'pagedown':
+      e.preventDefault();
+      editor.setLevel(editor.level - 1);
+      renderLevels();
+      break;
+    case 'f':
+      editor.frameAll();
+      break;
+    case 't':
+      $('tbTerritory').click();
+      break;
+    case 'v':
+      startWalk();
+      break;
+    case '?':
+    case 'h':
+      toggleHelp();
+      break;
+  }
+});
+
+// --------------------------------------------------------------- wiring
+function renderAll() {
+  renderToolbar();
+  renderLevels();
+  renderPanel();
+  renderCards();
+  renderStatus();
+  renderSelection();
+}
+
+store.on(() => {
+  markDirty();
+  renderToolbar();
+  renderLevels();
+  renderPanel();
+  renderSelection();
+});
+
+renderCatalogHead();
+
+async function boot() {
+  const m = location.hash.match(/^#plan=([\w-]+)/);
+  if (m) {
+    const shared = await decodeShare(m[1]);
+    history.replaceState(null, '', location.pathname + location.search);
+    if (shared) {
+      openDesign({ id: newId(), name: shared.name, updated: Date.now(), pieces: shared.pieces });
+      toast(`Geteilten Plan „${shared.name}“ geladen (${shared.pieces.length} Teile)`);
+      return;
+    }
+    toast('Link konnte nicht gelesen werden');
+  }
+  const cur = listDesigns().find((d) => d.id === currentDesignId()) ?? listDesigns()[0];
+  openDesign(cur ?? design);
+  if (!cur) setTimeout(() => toggleHelp(true), 400);
+}
+boot();
+
+renderThumbs(PART_ORDER, (id, url) => {
+  thumbs.set(id, url);
+  const img = document.querySelector<HTMLElement>(`.card[data-part="${id}"] .img`);
+  if (img) img.innerHTML = `<img src="${url}" alt="">`;
+});
