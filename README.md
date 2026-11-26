@@ -14,6 +14,7 @@
 - **Raid-Analyse**: Breaching Charges, Sprit und Zeit mit der Kettensäge für alle Türen und Palisaden.
 - **Raid-Pfad**: Loot-Raum markieren. Der Planer sucht den günstigsten Weg von außen (nach Ladungen oder Sprit), zeichnet ihn rot ein und meldet Schwachstellen wie Fenster ohne Gitter oder Wände, über die man klettern kann.
 - **Laufmodus** (`V`): WASD, rennen, springen, ducken, hinlegen, Türen öffnen (`F`), No-Clip (`N`). Wände und Decken blockieren.
+- **In DayZ ansehen:** Export als `.dze` für den DayZ Editor, mit den echten Aftermath-Klassennamen. Den Bauplatz übernimmst du aus einer Editor-Datei. Über das Pläne-Menü lassen sich Aftermath-Bauteile aus einer `.dze` auch zurück in den Planer importieren.
 - **Pläne** werden im Browser gespeichert. Du kannst sie als JSON exportieren und importieren, per **Link teilen** (der Plan steckt komprimiert im Link) und als Screenshot speichern.
 
 ## Datenquelle

@@ -8,6 +8,7 @@ import {
   strip, type Design, type Settings,
 } from './persist';
 import { analyseRaid, type Metric, type RaidTarget } from './raidpath';
+import { anchorFrom, exportDze, MAPS, piecesFromDze, readDze, type Anchor } from './dayz';
 import { Store } from './store';
 import { renderThumbs } from './thumbs';
 import { WalkMode } from './walk';
@@ -36,6 +37,7 @@ app.innerHTML = `
     <span class="tb-sep"></span>
     <button class="tb" id="tbShot" data-tip="Screenshot speichern">${I.camera}</button>
     <button class="tb" id="tbShare" data-tip="Teilen-Link kopieren">${I.share}</button>
+    <button class="tb" id="tbDayz" data-tip="In DayZ ansehen (Export für DayZ Editor)">${I.globe}</button>
     <button class="tb" id="tbHelp" data-tip="Hilfe & Tastatur (?)">${I.help}</button>
     <button class="tb on" id="tbPanel" data-tip="Seitenleiste ein/aus">${I.panel}</button>
   </div>
@@ -66,6 +68,9 @@ app.innerHTML = `
   <div class="toast" id="toast"></div>
   <div class="help-wrap" id="help" hidden></div>
   <input type="file" id="importFile" accept=".json,application/json" hidden>
+  <input type="file" id="dzeAnchorFile" accept=".dze" hidden>
+  <input type="file" id="dzeImportFile" accept=".dze" hidden>
+  <div class="help-wrap" id="dayz" hidden></div>
 </div>
 <footer class="catalog" id="catalog">
   <div class="cat-head" id="catHead"></div>
@@ -203,6 +208,7 @@ function renderDesignsMenu() {
     <button class="menu-item" data-act="dup">${I.copy}<span>Plan duplizieren</span></button>
     <button class="menu-item" data-act="export">${I.download}<span>Als Datei exportieren (.json)</span></button>
     <button class="menu-item" data-act="import">${I.upload}<span>Datei importieren</span></button>
+    <button class="menu-item" data-act="dze-import">${I.globe}<span>Aus DayZ Editor importieren (.dze)</span></button>
     <button class="menu-item" data-act="clear">${I.trash}<span>Alle Teile entfernen</span></button>
     <button class="menu-item" data-act="delete">${I.trash}<span>Plan löschen</span></button>`;
 }
@@ -237,6 +243,9 @@ $('designsMenu').onclick = (e) => {
       download(fileSafe(design.name) + '.json', URL.createObjectURL(blob));
       break;
     }
+    case 'dze-import':
+      $('dzeImportFile').click();
+      break;
     case 'import':
       $('importFile').click();
       break;
@@ -300,6 +309,7 @@ $('tbShot').onclick = () => {
 };
 $('tbShare').onclick = () => share();
 $('tbHelp').onclick = () => toggleHelp();
+$('tbDayz').onclick = () => toggleDayz();
 $('tbPanel').onclick = () => {
   $('panel').classList.toggle('collapsed');
   renderToolbar();
@@ -581,7 +591,8 @@ window.addEventListener('keydown', (e) => {
   if (ctrl) return;
   switch (k) {
     case 'escape':
-      if (editor.moving != null) editor.endMove(false);
+      if (!$('dayz').hidden) toggleDayz(false);
+      else if (editor.moving != null) editor.endMove(false);
       else if (editor.raidPick) editor.setRaidPick(false);
       else if (!$('help').hidden) toggleHelp(false);
       else if (editor.activePart) editor.setActivePart(null);
@@ -672,3 +683,124 @@ renderThumbs(PART_ORDER, (id, canvas) => {
   const c = document.querySelector<HTMLCanvasElement>(`canvas[data-thumb="${id}"]`);
   if (c) paintThumb(c);
 }).catch((e) => console.warn('Vorschaubilder nicht verfügbar', e));
+
+// ------------------------------------------------------- DayZ Editor (.dze)
+const ANCHOR_KEY = 'abp.dayzAnchor.v1';
+function loadAnchor(): Anchor {
+  try {
+    return { map: 'chernarusplus', x: 0, y: 0, z: 0, yaw: 0, ...JSON.parse(localStorage.getItem(ANCHOR_KEY) ?? '{}') };
+  } catch {
+    return { map: 'chernarusplus', x: 0, y: 0, z: 0, yaw: 0 };
+  }
+}
+let anchor = loadAnchor();
+const saveAnchor = () => localStorage.setItem(ANCHOR_KEY, JSON.stringify(anchor));
+
+function toggleDayz(force?: boolean) {
+  const h = $('dayz');
+  const show = force ?? h.hidden;
+  h.hidden = !show;
+  if (show) renderDayz();
+}
+
+function renderDayz(note = '') {
+  const n = (v: number) => (Math.round(v * 1000) / 1000).toString();
+  const unset = anchor.x === 0 && anchor.z === 0;
+  $('dayz').innerHTML = `<div class="float help dayz" style="position:relative">
+    <button class="tb close" data-dz="close">${I.x}</button>
+    <h2>In DayZ ansehen</h2>
+    <p>Exportiert die Basis als <b>.dze</b>-Datei für den <b>DayZ Editor</b>. Dort steht sie mit den echten Aftermath-Modellen auf der echten Karte.</p>
+    <h3>1 · Karte</h3>
+    <div class="dz-row">
+      <select data-dz="map">${MAPS.map((m) => `<option value="${m.id}" ${anchor.map === m.id ? 'selected' : ''}>${m.name}</option>`).join('')}
+        ${MAPS.some((m) => m.id === anchor.map) ? '' : `<option value="${esc(anchor.map)}" selected>${esc(anchor.map)}</option>`}</select>
+    </div>
+    <h3>2 · Bauplatz (Mitte der Basis, Bodenhöhe)</h3>
+    <div class="dz-row">
+      <label>X <input class="num" data-dz="x" type="number" step="0.1" value="${n(anchor.x)}"></label>
+      <label>Höhe <input class="num" data-dz="y" type="number" step="0.1" value="${n(anchor.y)}"></label>
+      <label>Z <input class="num" data-dz="z" type="number" step="0.1" value="${n(anchor.z)}"></label>
+      <label>Richtung ° <input class="num" data-dz="yaw" type="number" step="1" value="${n(anchor.yaw)}"></label>
+    </div>
+    <div class="dz-row">
+      <button class="btn" data-dz="pick">${I.upload} Bauplatz aus .dze-Datei übernehmen</button>
+      <span class="info" style="margin:0">Setz im Editor ein beliebiges Objekt an die Stelle, speichere und wähle die Datei hier aus. Position, Höhe und Drehung werden übernommen.</span>
+    </div>
+    ${unset ? '<div class="warn">Noch kein Bauplatz gesetzt – die Basis landet sonst in der Kartenecke (0 / 0).</div>' : ''}
+    ${note ? `<div class="info box">${note}</div>` : ''}
+    <h3>3 · Exportieren</h3>
+    <div class="dz-row">
+      <button class="btn primary" data-dz="export" ${store.pieces.size ? '' : 'disabled'}>${I.download} ${store.pieces.size} Teile als .dze herunterladen</button>
+    </div>
+    <h3>Im Spiel öffnen</h3>
+    <ol class="dz-steps">
+      <li>Im DayZ Launcher die Mods <b>DayZ Editor</b> (InclementDab), <b>Dabs Framework</b>, <b>CF</b> und die <b>Aftermath-Mods</b> (Aftermath_Licenced, AftermathServerMod, …) aktivieren.</li>
+      <li>DayZ starten, im Hauptmenü den <b>Editor</b> öffnen und die passende Karte wählen.</li>
+      <li>Im Editor <b>Datei → Öffnen</b> und die exportierte .dze-Datei laden. Kamera fliegt zur Basis.</li>
+    </ol>
+    <p class="info">Rückweg: Im Pläne-Menü „Aus DayZ Editor importieren“ holt Aftermath-Bauteile aus einer .dze-Datei in den Planer.</p>
+  </div>`;
+}
+
+$('dayz').addEventListener('click', async (e) => {
+  if (e.target === $('dayz')) return toggleDayz(false);
+  const b = (e.target as HTMLElement).closest<HTMLElement>('[data-dz]');
+  if (!b) return;
+  const act = b.dataset.dz;
+  if (act === 'close') toggleDayz(false);
+  if (act === 'pick') $('dzeAnchorFile').click();
+  if (act === 'export') {
+    const res = exportDze(store.all(), anchor);
+    const blob = new Blob([res.json], { type: 'application/json' });
+    download(fileSafe(design.name) + '.dze', URL.createObjectURL(blob));
+    toast(`${res.count} Teile exportiert${res.skipped.length ? `, ${res.skipped.length} ohne DayZ-Klasse übersprungen` : ''}`);
+  }
+});
+
+$('dayz').addEventListener('change', (e) => {
+  const el = e.target as HTMLInputElement;
+  const k = el.dataset.dz;
+  if (k === 'map') anchor.map = el.value;
+  if (k === 'x' || k === 'y' || k === 'z' || k === 'yaw') anchor[k] = Number(el.value) || 0;
+  saveAnchor();
+});
+
+($('dzeAnchorFile') as HTMLInputElement).onchange = async (e) => {
+  const input = e.target as HTMLInputElement;
+  const f = input.files?.[0];
+  input.value = '';
+  if (!f) return;
+  try {
+    const dze = await readDze(f);
+    const a = anchorFrom(dze);
+    if (!a) {
+      renderDayz('In der Datei ist kein Objekt. Setz im Editor ein Objekt an den Bauplatz und speichere erneut.');
+      return;
+    }
+    anchor = a;
+    saveAnchor();
+    renderDayz(`Bauplatz übernommen: ${dze.objects[0].type} bei ${a.x.toFixed(1)} / ${a.z.toFixed(1)}, Höhe ${a.y.toFixed(1)}, Richtung ${a.yaw.toFixed(0)}°.`);
+  } catch (err) {
+    renderDayz(`Datei konnte nicht gelesen werden (${esc(String((err as Error).message ?? err))}).`);
+  }
+};
+
+($('dzeImportFile') as HTMLInputElement).onchange = async (e) => {
+  const input = e.target as HTMLInputElement;
+  const f = input.files?.[0];
+  input.value = '';
+  if (!f) return;
+  try {
+    const dze = await readDze(f);
+    const { pieces, unknown } = piecesFromDze(dze);
+    if (!pieces.length) {
+      toast('Keine Aftermath-Bauteile in der Datei gefunden');
+      return;
+    }
+    openDesign({ id: newId(), name: f.name.replace(/\.dze$/i, '').slice(0, 60), updated: Date.now(), pieces });
+    toast(`${pieces.length} Teile importiert${unknown ? `, ${unknown} andere Objekte ignoriert` : ''}${dze.partial ? ' (Datei nur teilweise lesbar)' : ''}`);
+  } catch (err) {
+    toast('Datei konnte nicht gelesen werden');
+    console.error(err);
+  }
+};

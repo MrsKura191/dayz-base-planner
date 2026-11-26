@@ -246,3 +246,11 @@ table.t td.r, table.t th.r { text-align: right; }
 .fatal-card code { background: rgba(255,255,255,.07); padding: 1px 5px; border-radius: 4px; }
 .fatal-card button { margin-top: 12px; height: 34px; padding: 0 14px; border-radius: 9px; border: 0; background: var(--accent); color: var(--accent-ink); font-weight: 600; cursor: pointer; }
 .fatal-note { color: var(--muted); font-size: 12px; }
+
+.dayz { width: min(720px, 94vw); }
+.dz-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.dz-row label { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+.dz-row select { background: var(--panel-solid); color: var(--text); border: 1px solid var(--line-2); border-radius: 8px; height: 32px; padding: 0 8px; min-width: 200px; }
+.dz-row .num { width: 96px; }
+.dz-steps { color: var(--muted); line-height: 1.55; padding-left: 20px; margin: 4px 0; }
+.btn:disabled { opacity: .45; cursor: default; }
