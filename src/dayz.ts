@@ -94,7 +94,93 @@ export const DAYZ_CLASSES: Record<string, ExportSpec> = {
   bottle_rack: { cls: 'AM_WaterCoolerRack' },
 };
 
+/**
+ * Model of each class. Base parts spawned by class name run DayZ's construction
+ * logic, which fails outside a server ("invalid EntityType or
+ * ConstructionDataTypeHolder") and leaves them invisible; as static models
+ * they always show fully built.
+ */
+export const DAYZ_MODELS: Record<string, string> = {
+  Wood_Full_Wall: "BaseParts\\wood\\wood_full_wall\\Wood_full_wall.p3d",
+  Wood_Third_Wall: "BaseParts\\wood\\wood_Third_wall\\Wood_Third_wall.p3d",
+  Wood_Window_Wall: "BaseParts\\wood\\wood_Window_wall\\Wood_Window_wall.p3d",
+  Wood_Glass_Wall: "BaseParts\\wood\\wood_glass_wall\\Wood_Glass_Wall.p3d",
+  Wood_Glass_Window: "BaseParts\\wood\\wood_glass_window\\Wood_Glass_Window.p3d",
+  Wood_Door: "BaseParts\\wood\\wood_door\\wood_door.p3d",
+  Wood_Small_Door: "BaseParts\\wood\\wood_small_door\\wood_small_door.p3d",
+  Wood_Garage_Door: "BaseParts\\wood\\wood_garage_door\\wood_garage_door.p3d",
+  Wood_Garage_Shutter: "BaseParts\\wood\\Wood_Garage_Rolling_Door\\Wood_Garage_Rolling_Door.p3d",
+  Wood_Floor: "BaseParts\\wood\\wood_floor\\Wood_floor.p3d",
+  Wood_Floor_Porthole: "BaseParts\\wood\\wood_floor_porthole\\Wood_floor_porthole.p3d",
+  Wood_Floor_Door: "BaseParts\\wood\\wood_Floor_Door\\wood_floor_door.p3d",
+  Wood_Equal_Triangle: "BaseParts\\wood\\Wood_Equal_Triangle\\Wood_Equal_Triangle.p3d",
+  Wood_Walkway: "BaseParts\\wood\\wood_walkway\\Wood_walkway.p3d",
+  Wood_Stairs: "BaseParts\\wood\\wooden_stairs\\wooden_stairs.p3d",
+  Wood_Stairs_180: "BaseParts\\wood\\turning_stairs\\turning_stairs.p3d",
+  Wood_Shed: "BaseParts\\WoodShed\\WoodShed.p3d",
+  Wood_Palisade_Wall: "BaseParts\\wood\\wood_log_palisade_wall\\wood_log_palisade_wall.p3d",
+  Wood_Palisade_Door: "BaseParts\\wood\\wood_log_palisade_door\\wood_log_palisade_door.p3d",
+  Cinder_Full_Wall: "BaseParts\\cinder\\cinder_full_wall\\cinder_full_wall.p3d",
+  Cinder_Half_Wall: "BaseParts\\cinder\\cinder_half_wall\\cinder_half_wall.p3d",
+  Cinder_Window_Wall: "BaseParts\\cinder\\cinder_window_wall\\cinder_window_wall.p3d",
+  Cinder_Door: "BaseParts\\cinder\\cinder_door\\cinder_door.p3d",
+  Cinder_Small_Door: "BaseParts\\cinder\\cinder_small_door\\cinder_small_door.p3d",
+  Cinder_Garage_Door: "BaseParts\\cinder\\cinder_garage_door\\cinder_garage_door.p3d",
+  Cinder_Hanger_Door: "BaseParts\\cinder\\cinder_hanger_door\\cinder_hanger_door.p3d",
+  Cinder_Garage_Shutter: "BaseParts\\cinder\\cinder_garage_rolling_door\\cinder_garage_rolling_door.p3d",
+  Cinder_Hanger_Shutter: "BaseParts\\cinder\\Cinder_Hanger_Rolling_Door\\Cinder_Hanger_Rolling_Door.p3d",
+  Metal_Floor: "BaseParts\\metal\\metal_floor\\metal_floor.p3d",
+  Metal_Floor_Porthole: "BaseParts\\metal\\metal_Floor_Porthole\\metal_floor_Porthole.p3d",
+  Metal_Floor_Door: "BaseParts\\metal\\metal_Floor_Door\\metal_floor_door.p3d",
+  Metal_Window_Bars: "BaseParts\\metal\\metal_window_bars\\metal_window_bars.p3d",
+  Sandbag_Corner: "aftermath_licenced\\arma2\\BagFenceCorner.p3d",
+  Sandbag_Short: "aftermath_licenced\\arma2\\BagFenceShort.p3d",
+  Sandbag_Long: "aftermath_licenced\\arma2\\BagFenceLong.p3d",
+  Sandbag_Round: "aftermath_licenced\\arma2\\BagFenceRound.p3d",
+  HCubeBarrierx3: "Aftermath_Licenced\\materials\\hcube\\hbarrier3.p3d",
+  CamoNet_EAST: "aftermath_licenced\\arma2\\CamoNet_EAST_var1.p3d",
+  CamoNet_NATO: "aftermath_licenced\\arma2\\CamoNet_NATO.p3d",
+  Aftermath_Plotpole: "Aftermath_Licenced\\plotpole\\am_plotpole.p3d",
+  Wooden_Workbench: "BaseParts\\workbench\\workbench.p3d",
+  AM_WoodStorage: "BaseParts\\furniture\\WoodStorage\\woodstorage.p3d",
+  Aftermath_Sign: "BaseParts\\furniture\\Sign\\Sign.p3d",
+  GP_GreenhouseWood: "GreenhousePack\\data\\garden\\greenhouse_wood\\greenhousewood.p3d",
+  GP_Greenhouse: "GreenhousePack\\data\\garden\\greenhouse\\greenhouse.p3d",
+  AM_RaidAlarm: "AftermathTerminals\\quest_radio.p3d",
+  AM_Circular_Machine: "AftermathBaseItems\\circular_machine.p3d",
+  AM_Repairbench: "AM_Recycling\\RepairBench\\repairbench.p3d",
+  AM_Sewingbench: "AM_Recycling\\SewingBench\\sewingbench.p3d",
+  AM_Shredder: "AftermathBaseItems\\shredder.p3d",
+  Aftermath_Small_Case: "BaseParts\\furniture\\case\\Small.p3d",
+  Aftermath_Medium_Case: "BaseParts\\furniture\\case\\Medium.p3d",
+  Aftermath_Large_Case: "BaseParts\\furniture\\case\\large.p3d",
+  Aftermath_Long_Case: "BaseParts\\furniture\\case\\Long.p3d",
+  Aftermath_Shelf: "BaseParts\\furniture\\Shelf\\Shelf.p3d",
+  Aftermath_Dresser: "BaseParts\\furniture\\dresser\\dresser.p3d",
+  Aftermath_Tools_Cabinet: "BaseParts\\furniture\\tools_cabinet\\Tools_Cabinet.p3d",
+  Aftermath_Fridge: "BaseParts\\furniture\\Fridge\\Fridge.p3d",
+  Aftermath_Medic_Case: "BaseParts\\furniture\\medic_case\\medic_case.p3d",
+  Aftermath_Cabinet: "BaseParts\\furniture\\cabinet\\gunrack.p3d",
+  Aftermath_Cabinet_Small: "BaseParts\\furniture\\cabinet\\cabinet.p3d",
+  Aftermath_Locker: "BaseParts\\furniture\\locker\\locker.p3d",
+  AM_Dustbin: "AM_Dustbin\\dustbin.p3d",
+  Aftermath_Arcade_Machine: "BaseParts\\furniture\\ArcadeMachine\\arcademachine.p3d",
+  AM_TrophySkull: "AM_HeadOnSpike\\data\\TrophySkull.p3d",
+  AM_WaterCooler: "AftermathCollectables\\data\\Plastic\\water_cooler.p3d",
+  AM_WaterCoolerRack: "AftermathCollectables\\data\\Plastic\\bottle_rack.p3d",
+};
+
 const BY_CLASS = new Map(Object.entries(DAYZ_CLASSES).map(([id, s]) => [s.cls.toLowerCase(), id]));
+for (const [id, s] of Object.entries(DAYZ_CLASSES)) {
+  const m = DAYZ_MODELS[s.cls];
+  if (m) BY_CLASS.set(normModel(m), id);
+}
+
+function normModel(p: string) {
+  return p.trim().replace(/\//g, '\\').replace(/^\\+/, '').toLowerCase();
+}
+
+const typeKey = (t: string) => (/\.p3d$/i.test(t.trim()) ? normModel(t) : t.toLowerCase());
 
 export const MAPS = [
   { id: 'chernarusplus', name: 'Chernarus' },
@@ -136,11 +222,15 @@ export function baseCentre(pieces: Piece[]) {
 
 export interface ExportResult {
   json: string;
+  /** the same save in the editor's own binary format (what it writes itself) */
+  binary: Uint8Array;
   count: number;
   skipped: string[];
 }
 
-export function exportDze(pieces: Piece[], anchor: Anchor): ExportResult {
+export type ExportMode = 'model' | 'class';
+
+export function exportDze(pieces: Piece[], anchor: Anchor, mode: ExportMode = 'model'): ExportResult {
   const c = baseCentre(pieces);
   const A = rad(anchor.yaw);
   const objects: unknown[] = [];
@@ -157,13 +247,15 @@ export function exportDze(pieces: Piece[], anchor: Anchor): ExportResult {
     const wx = lx * Math.cos(A) + lz * Math.sin(A);
     const wz = -lx * Math.sin(A) + lz * Math.cos(A);
     const yaw = wrap(180 - deg(p.r) + (spec.yaw ?? 0) + anchor.yaw);
+    const model = DAYZ_MODELS[spec.cls];
+    const type = mode === 'model' && model ? model : spec.cls;
     objects.push({
-      Type: spec.cls,
+      Type: type,
       DisplayName: spec.cls,
       Position: [r3(anchor.x + wx), r3(anchor.y + p.y), r3(anchor.z + wz)],
       Orientation: [r3(yaw), 0, 0],
       Scale: 1,
-      Model: '',
+      Model: model ?? '',
       Flags: 30,
     });
   }
@@ -179,7 +271,83 @@ export function exportDze(pieces: Piece[], anchor: Anchor): ExportResult {
     EditorHiddenObjects: [],
     CameraTracks: [],
   };
-  return { json: JSON.stringify(save, null, 1), count: objects.length, skipped };
+  return { json: JSON.stringify(save, null, 1), binary: encodeBinary(save), count: objects.length, skipped };
+}
+
+interface SaveObject {
+  Type: string;
+  DisplayName: string;
+  Position: number[];
+  Orientation: number[];
+  Scale: number;
+  Model: string;
+  Flags: number;
+}
+
+/**
+ * EditorSaveData version 8, binned. Layout verified against a save written by
+ * DayZ Editor: strings are int32 length + bytes, vectors int32 count (3) +
+ * three floats, bools four bytes.
+ */
+export function encodeBinary(save: { MapName: string; CameraPosition: number[]; LastModified: number; CreationDate: number; EditorObjects: unknown[] }) {
+  const parts: Uint8Array[] = [];
+  const te = new TextEncoder();
+  const int = (v: number) => {
+    const b = new Uint8Array(4);
+    new DataView(b.buffer).setInt32(0, v, true);
+    parts.push(b);
+  };
+  const float = (v: number) => {
+    const b = new Uint8Array(4);
+    new DataView(b.buffer).setFloat32(0, v, true);
+    parts.push(b);
+  };
+  const str = (t: string) => {
+    const e = te.encode(t);
+    int(e.length);
+    parts.push(e);
+  };
+  const vec = (v: number[]) => {
+    int(3);
+    float(v[0]);
+    float(v[1]);
+    float(v[2]);
+  };
+  str('EditorBinned');
+  int(8);
+  str(save.MapName);
+  vec(save.CameraPosition);
+  str(''); // author
+  int(0); // credits
+  int(save.LastModified | 0);
+  int(save.CreationDate | 0);
+  const objs = save.EditorObjects as SaveObject[];
+  int(objs.length);
+  for (const o of objs) {
+    str(o.Type);
+    str(o.DisplayName);
+    vec(o.Position);
+    vec(o.Orientation);
+    float(o.Scale);
+    int(o.Flags);
+    int(0); // parameters
+    int(0); // editor only
+    int(0); // locked
+    int(1); // allow damage
+    int(0); // simulate
+    str(o.Model);
+    int(0); // attachments
+  }
+  int(0); // hidden objects
+  int(0); // camera tracks
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------ reading
@@ -296,9 +464,9 @@ export function anchorFrom(f: DzeFile): Anchor | null {
 
 /** Turn Aftermath parts found in a .dze back into planner pieces, around their centre. */
 export function piecesFromDze(f: DzeFile): { pieces: Omit<Piece, 'id'>[]; unknown: number } {
-  const known = f.objects.filter((o) => BY_CLASS.has(o.type.toLowerCase()));
+  const known = f.objects.filter((o) => BY_CLASS.has(typeKey(o.type)));
   if (!known.length) return { pieces: [], unknown: f.objects.length };
-  const floors = known.filter((o) => PARTS[BY_CLASS.get(o.type.toLowerCase())!].kind === 'floor');
+  const floors = known.filter((o) => PARTS[BY_CLASS.get(typeKey(o.type))!].kind === 'floor');
   const ground = floors.length ? Math.min(...floors.map((o) => o.pos[1])) - SLAB / 2 : Math.min(...known.map((o) => o.pos[1]));
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const o of known) {
@@ -307,7 +475,7 @@ export function piecesFromDze(f: DzeFile): { pieces: Omit<Piece, 'id'>[]; unknow
   }
   const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
   const pieces = known.map((o) => {
-    const id = BY_CLASS.get(o.type.toLowerCase())!;
+    const id = BY_CLASS.get(typeKey(o.type))!;
     const spec = DAYZ_CLASSES[id];
     const r = rad(180 + (spec.yaw ?? 0) - o.ori[0]);
     const [ox, oz] = spec.off ? rot(spec.off[0], spec.off[1], r) : [0, 0];

@@ -8,7 +8,7 @@ import {
   strip, type Design, type Settings,
 } from './persist';
 import { analyseRaid, type Metric, type RaidTarget } from './raidpath';
-import { anchorFrom, exportDze, MAPS, piecesFromDze, readDze, type Anchor } from './dayz';
+import { anchorFrom, exportDze, MAPS, piecesFromDze, readDze, type Anchor, type ExportMode } from './dayz';
 import { Store } from './store';
 import { renderThumbs } from './thumbs';
 import { WalkMode } from './walk';
@@ -694,6 +694,7 @@ function loadAnchor(): Anchor {
   }
 }
 let anchor = loadAnchor();
+let exportMode: ExportMode = (localStorage.getItem('abp.dayzMode.v1') as ExportMode) || 'model';
 const saveAnchor = () => localStorage.setItem(ANCHOR_KEY, JSON.stringify(anchor));
 
 function toggleDayz(force?: boolean) {
@@ -730,6 +731,10 @@ function renderDayz(note = '') {
     ${note ? `<div class="info box">${note}</div>` : ''}
     <h3>3 · Exportieren</h3>
     <div class="dz-row">
+      <label><input type="radio" name="dzmode" data-dz="mode" value="model" ${exportMode === 'model' ? 'checked' : ''}> Als Modelle – zum Ansehen im Editor (empfohlen)</label>
+      <label><input type="radio" name="dzmode" data-dz="mode" value="class" ${exportMode === 'class' ? 'checked' : ''}> Als Klassen – nur für Server mit Bausystem</label>
+    </div>
+    <div class="dz-row">
       <button class="btn primary" data-dz="export" ${store.pieces.size ? '' : 'disabled'}>${I.download} ${store.pieces.size} Teile als .dze herunterladen</button>
     </div>
     <h3>Im Spiel öffnen</h3>
@@ -750,8 +755,8 @@ $('dayz').addEventListener('click', async (e) => {
   if (act === 'close') toggleDayz(false);
   if (act === 'pick') $('dzeAnchorFile').click();
   if (act === 'export') {
-    const res = exportDze(store.all(), anchor);
-    const blob = new Blob([res.json], { type: 'application/json' });
+    const res = exportDze(store.all(), anchor, exportMode);
+    const blob = new Blob([res.binary as BlobPart], { type: 'application/octet-stream' });
     download(fileSafe(design.name) + '.dze', URL.createObjectURL(blob));
     toast(`${res.count} Teile exportiert${res.skipped.length ? `, ${res.skipped.length} ohne DayZ-Klasse übersprungen` : ''}`);
   }
@@ -761,6 +766,11 @@ $('dayz').addEventListener('change', (e) => {
   const el = e.target as HTMLInputElement;
   const k = el.dataset.dz;
   if (k === 'map') anchor.map = el.value;
+  if (k === 'mode') {
+    exportMode = el.value as ExportMode;
+    localStorage.setItem('abp.dayzMode.v1', exportMode);
+    return;
+  }
   if (k === 'x' || k === 'y' || k === 'z' || k === 'yaw') anchor[k] = Number(el.value) || 0;
   saveAnchor();
 });
