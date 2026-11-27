@@ -18,7 +18,7 @@ function webglAvailable(): boolean {
   }
 }
 
-function el<K HTMLElementTagNameMap extends keyof>(tag: K, text: string): HTMLElementTagNameMap[K] {
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, text: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   node.textContent = text;
   return node;
